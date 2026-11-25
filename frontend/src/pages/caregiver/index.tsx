@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -6,9 +6,12 @@ import {
   ClipboardCheck,
   Loader2,
   PhoneCall,
+  Plus,
+  RotateCcw,
   ScanLine,
   ShieldCheck,
   Trash2,
+  UserPlus,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -18,12 +21,17 @@ import { StripImage } from "../../components/StripImage";
 import { GENERATED_ASSETS } from "../../config";
 import {
   confirmMedicines,
+  createProfile,
+  flushMedicines,
+  listProfiles,
   removeVerifiedMedicine,
+  resetDemoProfile,
   scanPrescription,
 } from "../../lib/api";
 import {
   EmergencyContact,
   LanguageCode,
+  ProfileInfo,
   ScannedMedicineCandidate,
   TimeSlotKey,
   VerifiedMedicine,
@@ -84,12 +92,33 @@ export function CaregiverPage({
   const [scanError, setScanError] = useState("");
   const [drafts, setDrafts] = useState<ScannedMedicineCandidate[]>([]);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [saveMode, setSaveMode] = useState<"replace" | "append">("replace");
+  const [isFlushing, setIsFlushing] = useState(false);
+  const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
+  const [showNewProfileForm, setShowNewProfileForm] = useState(false);
+  const [newElderName, setNewElderName] = useState("");
+  const [newCustomCode, setNewCustomCode] = useState("");
+  const [newProfileLang, setNewProfileLang] = useState<LanguageCode>("hi");
+  const [isCreatingProfile, setIsCreatingProfile] = useState(false);
   const [publishNotice, setPublishNotice] = useState("");
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [ttsError, setTtsError] = useState("");
 
   const [contactForm, setContactForm] = useState<EmergencyContact>(emergencyContact);
   const [contactSaved, setContactSaved] = useState(false);
+
+  const refreshProfiles = useCallback(async () => {
+    try {
+      const list = await listProfiles();
+      setProfiles(list);
+    } catch {
+      // Ignore profile list fetch failures gracefully
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshProfiles();
+  }, [refreshProfiles, verifiedMedicines.length]);
 
   async function executeScan(params: {
     file?: File;
@@ -213,6 +242,7 @@ export function CaregiverPage({
         share_code: shareCode,
         verified_by: emergencyContact.name || "Primary Caregiver",
         doctor_or_clinic: doctorOrClinic || undefined,
+        replace_existing: saveMode === "replace",
         medicines: verifiedDrafts,
       });
 
@@ -220,9 +250,12 @@ export function CaregiverPage({
       setPublishNotice(
         `${saved.length} caregiver-verified ${
           saved.length === 1 ? "medicine" : "medicines"
-        } confirmed via POST /medicines/confirm and published to Grandparents Mode (${shareCode}).`
+        } ${
+          saveMode === "replace" ? "replaced previous schedule and" : "added to existing schedule and"
+        } published to Grandparents Mode (${shareCode}).`
       );
       await onRefreshData();
+      await refreshProfiles();
     } catch (err: unknown) {
       setScanError(err instanceof Error ? err.message : "Failed to confirm schedule.");
     } finally {
@@ -230,9 +263,70 @@ export function CaregiverPage({
     }
   }
 
+  async function handleFlushSchedule() {
+    setIsFlushing(true);
+    setScanError("");
+    try {
+      const count = await flushMedicines(shareCode);
+      setPublishNotice(`Flushed ${count} active medicine(s) from ${shareCode}.`);
+      await onRefreshData();
+      await refreshProfiles();
+    } catch (err: unknown) {
+      setScanError(err instanceof Error ? err.message : "Failed to flush schedule.");
+    } finally {
+      setIsFlushing(false);
+    }
+  }
+
+  async function handleResetDemo() {
+    setIsFlushing(true);
+    setScanError("");
+    try {
+      await resetDemoProfile();
+      onChangeShareCode("DEMO01");
+      setPublishNotice("Reset DEMO01 back to the clean 5-medicine demo schedule.");
+      await onRefreshData();
+      await refreshProfiles();
+    } catch (err: unknown) {
+      setScanError(err instanceof Error ? err.message : "Failed to reset DEMO01.");
+    } finally {
+      setIsFlushing(false);
+    }
+  }
+
+  async function handleCreateProfile(event: FormEvent) {
+    event.preventDefault();
+    if (!newElderName.trim()) return;
+    setIsCreatingProfile(true);
+    setScanError("");
+    try {
+      const created = await createProfile({
+        share_code: newCustomCode.trim() || undefined,
+        elder_name: newElderName.trim(),
+        preferred_language: newProfileLang,
+        caregiver_name: emergencyContact.name || undefined,
+        caregiver_phone: emergencyContact.phone || undefined,
+      });
+      onChangeShareCode(created.share_code);
+      setNewElderName("");
+      setNewCustomCode("");
+      setShowNewProfileForm(false);
+      setPublishNotice(
+        `Created profile "${created.elder_name}" with Share Code ${created.share_code}.`
+      );
+      await refreshProfiles();
+      await onRefreshData();
+    } catch (err: unknown) {
+      setScanError(err instanceof Error ? err.message : "Failed to create profile.");
+    } finally {
+      setIsCreatingProfile(false);
+    }
+  }
+
   async function handleDeleteVerified(medicineId: string) {
     await removeVerifiedMedicine(medicineId);
     await onRefreshData();
+    await refreshProfiles();
   }
 
   function handlePreviewVoice(med: VerifiedMedicine) {
@@ -283,17 +377,44 @@ export function CaregiverPage({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
-            <span>Share Code:</span>
+          <div className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+            <span>Profile:</span>
+            {profiles.length > 0 && (
+              <select
+                aria-label="Select existing elder profile"
+                value={profiles.some((p) => p.share_code === shareCode) ? shareCode : ""}
+                onChange={(e) => {
+                  if (e.target.value) onChangeShareCode(e.target.value);
+                }}
+                className="min-h-[42px] px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold"
+              >
+                {!profiles.some((p) => p.share_code === shareCode) && (
+                  <option value="">{shareCode} (Custom)</option>
+                )}
+                {profiles.map((p) => (
+                  <option key={p.share_code} value={p.share_code}>
+                    {p.share_code} · {p.elder_name} ({p.active_medicine_count})
+                  </option>
+                ))}
+              </select>
+            )}
             <input
               type="text"
               value={shareCode}
               onChange={(e) => onChangeShareCode(e.target.value.toUpperCase())}
               maxLength={12}
               aria-label="Family profile share code"
-              className="w-28 min-h-[42px] px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono-data text-sm uppercase"
+              className="w-24 min-h-[42px] px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono-data text-sm uppercase"
             />
-          </label>
+            <button
+              type="button"
+              onClick={() => setShowNewProfileForm((v) => !v)}
+              className="inline-flex items-center gap-1.5 min-h-[42px] px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <UserPlus className="w-3.5 h-3.5 text-teal-700 dark:text-teal-400" aria-hidden="true" />
+              <span>New Profile</span>
+            </button>
+          </div>
 
           <button
             type="button"
@@ -314,6 +435,75 @@ export function CaregiverPage({
           </button>
         </div>
       </div>
+
+      {/* Inline Create Profile Form */}
+      {showNewProfileForm && (
+        <form
+          onSubmit={(e) => void handleCreateProfile(e)}
+          className="rounded-2xl border border-teal-200 dark:border-teal-800 bg-teal-50/50 dark:bg-teal-950/20 p-5 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
+        >
+          <label className="block space-y-1">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Elder Name *
+            </span>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Meera Dadi"
+              value={newElderName}
+              onChange={(e) => setNewElderName(e.target.value)}
+              className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+            />
+          </label>
+
+          <label className="block space-y-1">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Share Code (optional)
+            </span>
+            <input
+              type="text"
+              placeholder="Auto-generate"
+              maxLength={12}
+              value={newCustomCode}
+              onChange={(e) => setNewCustomCode(e.target.value.toUpperCase())}
+              className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-data uppercase"
+            />
+          </label>
+
+          <label className="block space-y-1">
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Preferred Language
+            </span>
+            <select
+              value={newProfileLang}
+              onChange={(e) => setNewProfileLang(e.target.value as LanguageCode)}
+              className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+            >
+              <option value="hi">Hindi (हिन्दी)</option>
+              <option value="mr">Marathi (मराठी)</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              disabled={isCreatingProfile}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-[42px] px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-sm font-bold cursor-pointer disabled:opacity-50"
+            >
+              <Plus className="w-4 h-4" aria-hidden="true" />
+              <span>{isCreatingProfile ? "Creating..." : "Create"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowNewProfileForm(false)}
+              className="min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
 
       {/* Segmented Workspace Tabs */}
       <div
@@ -426,33 +616,63 @@ export function CaregiverPage({
                 ))}
               </div>
 
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
-                <div className="space-y-1">
-                  <p className="text-sm font-bold text-slate-900 dark:text-white">
-                    Confirm Schedule (POST /medicines/confirm)
-                  </p>
-                  <p className="text-xs text-slate-600 dark:text-slate-400">
-                    {unverifiedCount > 0
-                      ? `${unverifiedCount} item(s) still unverified and locked out of Grandparents Mode.`
-                      : "All items are manually confirmed and ready for voiceover in Grandparents Mode."}
-                  </p>
+              <div className="rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">
+                      Confirm Schedule (POST /medicines/confirm)
+                    </p>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      {unverifiedCount > 0
+                        ? `${unverifiedCount} item(s) still unverified and locked out of Grandparents Mode.`
+                        : "All items are manually confirmed and ready for voiceover in Grandparents Mode."}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={verifiedDrafts.length === 0 || isConfirming}
+                    onClick={() => void handleConfirmSchedule()}
+                    className="inline-flex items-center justify-center gap-2 min-h-[48px] px-6 py-3 rounded-xl bg-teal-700 hover:bg-teal-800 dark:bg-teal-500 dark:hover:bg-teal-400 text-white dark:text-slate-950 text-sm font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {isConfirming ? (
+                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+                    )}
+                    <span>
+                      {saveMode === "replace"
+                        ? `Flush & Publish (${verifiedDrafts.length}) to ${shareCode}`
+                        : `Add (${verifiedDrafts.length}) to ${shareCode}`}
+                    </span>
+                  </button>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={verifiedDrafts.length === 0 || isConfirming}
-                  onClick={() => void handleConfirmSchedule()}
-                  className="inline-flex items-center justify-center gap-2 min-h-[48px] px-6 py-3 rounded-xl bg-teal-700 hover:bg-teal-800 dark:bg-teal-500 dark:hover:bg-teal-400 text-white dark:text-slate-950 text-sm font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {isConfirming ? (
-                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <ShieldCheck className="w-4 h-4" aria-hidden="true" />
-                  )}
-                  <span>
-                    Confirm &amp; Publish ({verifiedDrafts.length}) to {shareCode}
+                <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                    When saving to {shareCode}:
                   </span>
-                </button>
+                  <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold cursor-pointer">
+                    <input
+                      type="radio"
+                      name="saveMode"
+                      value="replace"
+                      checked={saveMode === "replace"}
+                      onChange={() => setSaveMode("replace")}
+                    />
+                    <span>Flush previous &amp; replace ({verifiedMedicines.length} active)</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold cursor-pointer">
+                    <input
+                      type="radio"
+                      name="saveMode"
+                      value="append"
+                      checked={saveMode === "append"}
+                      onChange={() => setSaveMode("append")}
+                    />
+                    <span>Add to existing schedule</span>
+                  </label>
+                </div>
               </div>
             </section>
           )}
@@ -462,6 +682,37 @@ export function CaregiverPage({
       {/* Tab 2: Live Verified Schedule */}
       {activeTab === "verified" && (
         <section className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-3.5">
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
+              Active medicines for <span className="font-mono-data">{shareCode}</span>:{" "}
+              {verifiedMedicines.length}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {shareCode === "DEMO01" && (
+                <button
+                  type="button"
+                  disabled={isFlushing}
+                  onClick={() => void handleResetDemo()}
+                  className="inline-flex items-center gap-1.5 min-h-[38px] px-3.5 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Reset DEMO01</span>
+                </button>
+              )}
+              {verifiedMedicines.length > 0 && (
+                <button
+                  type="button"
+                  disabled={isFlushing}
+                  onClick={() => void handleFlushSchedule()}
+                  className="inline-flex items-center gap-1.5 min-h-[38px] px-3.5 py-1.5 rounded-xl border border-red-200 dark:border-red-900 text-red-700 dark:text-red-400 text-xs font-semibold hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Flush All ({verifiedMedicines.length})</span>
+                </button>
+              )}
+            </div>
+          </div>
+
           {ttsError && (
             <div
               role="alert"

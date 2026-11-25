@@ -71,7 +71,18 @@ export interface ConfirmMedicinesRequest {
   share_code: string;
   verified_by: string;
   doctor_or_clinic?: string;
+  replace_existing?: boolean;
   medicines: ScannedMedicineCandidate[];
+}
+
+export interface ProfileInfo {
+  share_code: string;
+  elder_name: string;
+  age?: number | null;
+  preferred_language: LanguageCode;
+  caregiver_name?: string | null;
+  caregiver_phone?: string | null;
+  active_medicine_count: number;
 }
 
 export interface ScheduleResponse {
