@@ -47,6 +47,7 @@ from schemas import (
     MedicineResponse,
     MedicinesConfirmRequest,
     MedicinesConfirmResponse,
+    MedicineUpdateRequest,
     NaniScheduleCard,
     NaniScheduleResponse,
     PrescriptionExtractionOutput,
@@ -56,6 +57,7 @@ from schemas import (
     ScanResponse,
     ScheduleSlot,
     VitalCreateRequest,
+    VitalDeleteResponse,
     VitalFlag,
     VitalResponse,
     VitalsHistoryResponse,
@@ -67,7 +69,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("nanicare.engine")
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip() or "gemini-3.5-flash"
+GEMINI_FALLBACK_MODELS: tuple[str, ...] = (
+    "gemini-3.8-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+)
 DEFAULT_SHARE_CODE = os.getenv("DEFAULT_SHARE_CODE", "DEMO01").strip().upper() or "DEMO01"
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024  # 12 MB max prescription image size
 
@@ -114,14 +121,16 @@ def _call_gemini_vision(
     image_bytes: bytes,
     mime_type: str,
     api_key: str,
+    model_name: str | None = None,
 ) -> PrescriptionExtractionOutput:
     """Invoke Gemini Vision with strict Pydantic v2 JSON Structured Output."""
     from google import genai
     from google.genai import types
 
+    target_model = (model_name or GEMINI_MODEL).strip() or "gemini-3.5-flash"
     client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
-        model=GEMINI_MODEL,
+        model=target_model,
         contents=[
             types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
             "Extract all medicines, strengths, Indian dosage shorthand, meal relations, and confidence scores from this image.",
@@ -144,6 +153,45 @@ def _call_gemini_vision(
     if not raw_text:
         raise RuntimeError("Gemini Vision returned an empty response.")
     return PrescriptionExtractionOutput.model_validate_json(raw_text)
+
+
+def _call_gemini_vision_with_fallback(
+    image_bytes: bytes,
+    mime_type: str,
+    api_key: str,
+) -> tuple[PrescriptionExtractionOutput, str, list[str]]:
+    """Try the configured Gemini model and fall back on transient/deprecated model errors."""
+    candidates: list[str] = []
+    for candidate in (GEMINI_MODEL, *GEMINI_FALLBACK_MODELS):
+        cleaned = candidate.strip()
+        if cleaned and cleaned not in candidates:
+            candidates.append(cleaned)
+
+    last_exc: Exception | None = None
+    extra_warnings: list[str] = []
+    for idx, model_name in enumerate(candidates):
+        try:
+            extraction = _call_gemini_vision(
+                image_bytes=image_bytes,
+                mime_type=mime_type,
+                api_key=api_key,
+                model_name=model_name,
+            )
+            if idx > 0:
+                extra_warnings.append(
+                    f"Primary model '{candidates[0]}' was unavailable; extracted via '{model_name}'."
+                )
+            return extraction, model_name, extra_warnings
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "Gemini Vision model '%s' failed (%s); trying next fallback if available",
+                model_name,
+                type(exc).__name__,
+            )
+
+    assert last_exc is not None
+    raise last_exc
 
 
 def _enrich_extraction(
@@ -757,7 +805,7 @@ async def scan_prescription(
         )
 
     try:
-        extraction = _call_gemini_vision(
+        extraction, model_used, fallback_warnings = _call_gemini_vision_with_fallback(
             image_bytes=image_bytes,
             mime_type=mime_type,
             api_key=api_key,
@@ -765,8 +813,9 @@ async def scan_prescription(
         return _enrich_extraction(
             extraction=extraction,
             source="gemini_vision",
-            model_used=GEMINI_MODEL,
+            model_used=model_used,
             uploaded_thumbnail=uploaded_thumbnail,
+            extra_warnings=fallback_warnings,
         )
     except Exception as exc:
         logger.exception("Gemini Vision extraction failed; falling back to demo payload")
@@ -889,6 +938,33 @@ def get_profile(share_code: str, db: Session = Depends(get_db)) -> ProfileRespon
 # =============================================================================
 
 
+def _recompute_profile_safety_flags(db: Session, profile_id: int) -> list[SafetyFlag]:
+    """Re-evaluate deterministic safety flags across all active medicines of a profile."""
+    all_active = list(
+        db.scalars(
+            select(Medicine)
+            .where(and_(Medicine.profile_id == profile_id, Medicine.is_active.is_(True)))
+            .order_by(Medicine.id.asc())
+        )
+    )
+    safety_inputs = [
+        {
+            "brand_name": m.brand_name,
+            "generic_name": m.generic_name,
+            "strength": m.strength,
+            "dosage_pattern": m.dosage_pattern,
+            "meal_relation": m.meal_relation,
+            "confidence": 1.0,  # Caregiver already verified these records
+            "low_confidence_fields": [],
+        }
+        for m in all_active
+    ]
+    per_med_flags, regimen_flags = evaluate_medicine_safety(safety_inputs)
+    for idx, med in enumerate(all_active):
+        med.safety_flags = [f.model_dump() for f in per_med_flags.get(idx, [])]
+    return regimen_flags
+
+
 @app.post(
     "/medicines/confirm",
     response_model=MedicinesConfirmResponse,
@@ -978,29 +1054,7 @@ def confirm_medicines(
 
     db.flush()
 
-    # Re-evaluate deterministic safety flags across ALL active medicines for this profile
-    all_active = list(
-        db.scalars(
-            select(Medicine)
-            .where(and_(Medicine.profile_id == profile.id, Medicine.is_active.is_(True)))
-            .order_by(Medicine.id.asc())
-        )
-    )
-    safety_inputs = [
-        {
-            "brand_name": m.brand_name,
-            "generic_name": m.generic_name,
-            "strength": m.strength,
-            "dosage_pattern": m.dosage_pattern,
-            "meal_relation": m.meal_relation,
-            "confidence": 1.0,  # Caregiver already verified these records
-            "low_confidence_fields": [],
-        }
-        for m in all_active
-    ]
-    per_med_flags, regimen_flags = evaluate_medicine_safety(safety_inputs)
-    for idx, med in enumerate(all_active):
-        med.safety_flags = [f.model_dump() for f in per_med_flags.get(idx, [])]
+    regimen_flags = _recompute_profile_safety_flags(db, profile.id)
 
     db.commit()
     for med in new_models:
@@ -1027,6 +1081,86 @@ def list_medicines(
         stmt = stmt.where(Medicine.is_active.is_(True))
     meds = list(db.scalars(stmt.order_by(Medicine.id.asc())))
     return [_serialize_medicine(m) for m in meds]
+
+
+@app.patch(
+    "/medicines/{medicine_id}",
+    response_model=MedicineResponse,
+    tags=["Caregiver Mode"],
+)
+def update_medicine(
+    medicine_id: int,
+    payload: MedicineUpdateRequest,
+    db: Session = Depends(get_db),
+) -> MedicineResponse:
+    """Update a verified medicine's schedule/details and recompute safety flags."""
+    med = db.get(Medicine, medicine_id)
+    if not med:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Medicine id={medicine_id} not found.",
+        )
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "brand_name" in updates and updates["brand_name"] is not None:
+        med.brand_name = updates["brand_name"].strip()
+    if "generic_name" in updates:
+        med.generic_name = updates["generic_name"].strip() if updates["generic_name"] else None
+    if "strength" in updates:
+        med.strength = updates["strength"].strip() if updates["strength"] else None
+    if "dosage_form" in updates and updates["dosage_form"] is not None:
+        med.dosage_form = updates["dosage_form"]
+    if "duration_days" in updates:
+        med.duration_days = updates["duration_days"]
+    if "strip_thumbnail" in updates:
+        med.strip_thumbnail = updates["strip_thumbnail"]
+    if "prescribed_by" in updates:
+        med.prescribed_by = updates["prescribed_by"]
+
+    pattern_input = updates.get("dosage_pattern") or med.dosage_pattern
+    meal_input = updates.get("meal_relation") or med.meal_relation
+    slots, as_needed, normalized_pattern, effective_meal = parse_indian_dosage_pattern(
+        dosage_pattern=pattern_input,
+        meal_relation=meal_input,  # type: ignore[arg-type]
+        brand_name=med.brand_name,
+        generic_name=med.generic_name,
+    )
+    med.dosage_pattern = normalized_pattern
+    med.meal_relation = effective_meal
+    med.schedule_slots = [s.model_dump() for s in slots]
+    med.as_needed = as_needed
+    if "pill_color_tag" in updates and updates["pill_color_tag"]:
+        med.pill_color_tag = updates["pill_color_tag"]
+    elif "dosage_pattern" in updates or "meal_relation" in updates:
+        med.pill_color_tag = pick_pill_color_tag(slots, as_needed)
+
+    schedule_changed = bool(
+        {"brand_name", "strength", "dosage_form", "dosage_pattern", "meal_relation"} & updates.keys()
+    )
+    if schedule_changed:
+        generated = build_multilingual_instructions(
+            brand_name=med.brand_name,
+            strength=med.strength,
+            dosage_form=med.dosage_form,
+            meal_relation=effective_meal,
+            schedule_slots=slots,
+            as_needed=as_needed,
+        )
+    else:
+        generated = {}
+
+    for lang_key in ("en", "hi", "mr"):
+        field_name = f"instructions_{lang_key}"
+        if field_name in updates:
+            setattr(med, field_name, updates[field_name] or generated.get(lang_key))
+        elif schedule_changed:
+            setattr(med, field_name, generated[lang_key])
+
+    db.flush()
+    _recompute_profile_safety_flags(db, med.profile_id)
+    db.commit()
+    db.refresh(med)
+    return _serialize_medicine(med)
 
 
 @app.delete("/medicines/{medicine_id}", tags=["Caregiver Mode"])
@@ -1092,11 +1226,26 @@ def mark_dose(
 
     target_date = payload.dose_date or get_ist_today()
 
+    # Resolve scheduled_slot cleanly even when simplified clients send morning/afternoon/night
+    med_slots = med.schedule_slots or []
+    slot_names = [str(s.get("slot")) for s in med_slots if s.get("slot")]
+    effective_slot = payload.scheduled_slot
+    if effective_slot not in slot_names:
+        slot_aliases: dict[str, tuple[str, ...]] = {
+            "morning": ("empty_stomach",),
+            "afternoon": ("evening",),
+            "night": ("sos",),
+        }
+        for alias in slot_aliases.get(payload.scheduled_slot, ()):
+            if alias in slot_names:
+                effective_slot = alias  # type: ignore[assignment]
+                break
+
     # Resolve scheduled_time from medicine's slot metadata if not explicitly provided
     resolved_time = payload.scheduled_time
     if not resolved_time:
         matching_slot = next(
-            (s for s in (med.schedule_slots or []) if s.get("slot") == payload.scheduled_slot),
+            (s for s in med_slots if s.get("slot") == effective_slot),
             None,
         )
         resolved_time = (
@@ -1110,7 +1259,7 @@ def mark_dose(
             and_(
                 DoseLog.medicine_id == med.id,
                 DoseLog.dose_date == target_date,
-                DoseLog.scheduled_slot == payload.scheduled_slot,
+                DoseLog.scheduled_slot == effective_slot,
             )
         )
     )
@@ -1129,7 +1278,7 @@ def mark_dose(
             profile_id=profile.id,
             medicine_id=med.id,
             dose_date=target_date,
-            scheduled_slot=payload.scheduled_slot,
+            scheduled_slot=effective_slot,
             scheduled_time=resolved_time,
             status=payload.status,
             taken_at=now_utc if payload.status == "taken" else None,
@@ -1303,6 +1452,27 @@ def get_vitals_history(
         latest_status=serialized[0].overall_status if serialized else None,
         vitals=serialized,
     )
+
+
+@app.delete(
+    "/vitals/{vital_id}",
+    response_model=VitalDeleteResponse,
+    tags=["Vitals & Family Loop"],
+)
+def delete_vital_log(
+    vital_id: int,
+    db: Session = Depends(get_db),
+) -> VitalDeleteResponse:
+    """Delete a vital reading by ID so frontend deletions persist in PostgreSQL."""
+    vital = db.get(VitalLog, vital_id)
+    if not vital:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"VitalLog id={vital_id} not found.",
+        )
+    db.delete(vital)
+    db.commit()
+    return VitalDeleteResponse(deleted=True, vital_id=vital_id)
 
 
 # =============================================================================

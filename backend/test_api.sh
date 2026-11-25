@@ -119,8 +119,16 @@ curl -fsS -X POST "${BASE_URL}/doses/mark" \
   }" | pp
 
 echo ""
-echo "[9/11] POST /vitals (log abnormal fever + elevated BP -> deterministic flags)"
-curl -fsS -X POST "${BASE_URL}/vitals" \
+echo "[9/13] PATCH /medicines/${FIRST_MED_ID} (update confirmed medicine strength & instructions)"
+curl -fsS -X PATCH "${BASE_URL}/medicines/${FIRST_MED_ID}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "strength": "75 mcg"
+  }' | pp
+
+echo ""
+echo "[10/13] POST /vitals (log abnormal fever + elevated BP -> deterministic flags)"
+CREATED_VITAL=$(curl -fsS -X POST "${BASE_URL}/vitals" \
   -H "Content-Type: application/json" \
   -d '{
     "share_code": "NANI99",
@@ -131,14 +139,17 @@ curl -fsS -X POST "${BASE_URL}/vitals" \
     "pulse_bpm": 88,
     "notes": "Feeling slightly warm in the evening",
     "recorded_by": "caregiver"
-  }' | pp
+  }')
+echo "${CREATED_VITAL}" | pp
+
+VITAL_ID=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d["id"])' "${CREATED_VITAL}")
 
 echo ""
-echo "[10/11] GET /vitals/NANI99 (vitals history)"
+echo "[11/13] GET /vitals/NANI99 (vitals history)"
 curl -fsS "${BASE_URL}/vitals/NANI99" | pp
 
 echo ""
-echo "[11/11] GET /profile/NANI99/summary (daily report + WhatsApp https://wa.me/?text=... link)"
+echo "[12/13] GET /profile/NANI99/summary (daily report + WhatsApp https://wa.me/?text=... link)"
 SUMMARY=$(curl -fsS "${BASE_URL}/profile/NANI99/summary")
 echo "${SUMMARY}" | pp
 
@@ -146,5 +157,9 @@ WA_URL=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["whats
 echo ""
 echo "Verified WhatsApp Deep Link:"
 echo "${WA_URL}"
+
 echo ""
-echo "All 11 NaniCare backend smoke tests PASSED!"
+echo "[13/13] DELETE /vitals/${VITAL_ID} (remove disposable test vital)"
+curl -fsS -X DELETE "${BASE_URL}/vitals/${VITAL_ID}" | pp
+echo ""
+echo "All 13 NaniCare backend smoke tests PASSED!"
