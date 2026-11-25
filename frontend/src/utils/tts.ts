@@ -1,112 +1,245 @@
 import { LANGUAGES } from "../config";
 import { LanguageCode, TimeSlotKey, VerifiedMedicine } from "../types/api";
 
-let activeSpeechSession = 0;
+const FASTAPI_BASE_URL = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
+
+const AUDIO_CACHE_MAX = 64;
+const audioUrlCache = new Map<string, string>();
+
+let activeAudio: HTMLAudioElement | null = null;
+let activeAbortController: AbortController | null = null;
+let playbackGeneration = 0;
 
 export function isSpeechSynthesisSupported(): boolean {
-  return typeof window !== "undefined" && "speechSynthesis" in window;
-}
-
-export function stopSpeaking(): void {
-  activeSpeechSession += 1;
-  if (!isSpeechSynthesisSupported()) return;
-  window.speechSynthesis.cancel();
-}
-
-function getVoicesWithWait(timeoutMs = 500): Promise<SpeechSynthesisVoice[]> {
-  if (!isSpeechSynthesisSupported()) return Promise.resolve([]);
-  const immediate = window.speechSynthesis.getVoices();
-  if (immediate.length > 0) return Promise.resolve(immediate);
-
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      window.speechSynthesis.removeEventListener?.("voiceschanged", onVoicesChanged);
-      resolve(window.speechSynthesis.getVoices());
-    };
-    const onVoicesChanged = () => finish();
-    window.speechSynthesis.addEventListener?.("voiceschanged", onVoicesChanged);
-    setTimeout(finish, timeoutMs);
-  });
-}
-
-function pickBestVoice(
-  locale: string,
-  voices: SpeechSynthesisVoice[]
-): SpeechSynthesisVoice | null {
-  if (!voices.length) return null;
-
-  const langPrefix = locale.split("-")[0].toLowerCase();
-
   return (
-    voices.find((v) => v.lang.toLowerCase() === locale.toLowerCase()) ||
-    voices.find((v) => v.lang.toLowerCase().startsWith(`${langPrefix}-`)) ||
-    voices.find((v) => v.lang.toLowerCase().startsWith(langPrefix)) ||
-    null
+    FASTAPI_BASE_URL.length > 0 ||
+    (typeof window !== "undefined" && "speechSynthesis" in window)
   );
 }
 
-function dispatchUtterance(
+export function stopSpeaking(): void {
+  playbackGeneration += 1;
+
+  if (activeAbortController) {
+    activeAbortController.abort();
+    activeAbortController = null;
+  }
+
+  if (activeAudio) {
+    activeAudio.onended = null;
+    activeAudio.onerror = null;
+    activeAudio.pause();
+    activeAudio.currentTime = 0;
+    activeAudio = null;
+  }
+
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+}
+
+function scoreVoice(voice: SpeechSynthesisVoice, targetLang: string): number {
+  const vLang = voice.lang.toLowerCase();
+  const target = targetLang.toLowerCase();
+  const prefix = target.split("-")[0];
+
+  let score = 0;
+  if (vLang === target) score += 100;
+  else if (vLang.startsWith(`${prefix}-`)) score += 70;
+  else if (vLang.startsWith(prefix)) score += 50;
+  else return -1;
+
+  const name = voice.name.toLowerCase();
+  if (name.includes("natural") || name.includes("neural") || name.includes("online")) score += 30;
+  if (name.includes("google")) score += 20;
+  if (name.includes("siri") || name.includes("enhanced") || name.includes("premium")) score += 15;
+  if (!voice.localService) score += 5;
+
+  return score;
+}
+
+async function getVoicesReady(): Promise<SpeechSynthesisVoice[]> {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return [];
+  const existing = window.speechSynthesis.getVoices();
+  if (existing.length > 0) return existing;
+
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => {
+      window.speechSynthesis.removeEventListener("voiceschanged", onReady);
+      resolve(window.speechSynthesis.getVoices());
+    }, 350);
+
+    function onReady() {
+      window.clearTimeout(timer);
+      window.speechSynthesis.removeEventListener("voiceschanged", onReady);
+      resolve(window.speechSynthesis.getVoices());
+    }
+
+    window.speechSynthesis.addEventListener("voiceschanged", onReady);
+  });
+}
+
+async function pickBestBrowserVoice(
+  language: LanguageCode
+): Promise<{ voice: SpeechSynthesisVoice | null; resolvedLocale: string }> {
+  const voices = await getVoicesReady();
+  const primaryLocale = LANGUAGES[language].speechLocale;
+
+  // Marathi voices are often missing on macOS/Chrome; fall back to Hindi (Devanagari)
+  // before falling back to an English voice that cannot pronounce Devanagari script.
+  const candidateLocales =
+    language === "mr" ? [primaryLocale, "hi-IN"] : [primaryLocale];
+
+  for (const locale of candidateLocales) {
+    let best: SpeechSynthesisVoice | null = null;
+    let bestScore = -1;
+    for (const voice of voices) {
+      const s = scoreVoice(voice, locale);
+      if (s > bestScore) {
+        bestScore = s;
+        best = voice;
+      }
+    }
+    if (best) {
+      return { voice: best, resolvedLocale: best.lang || locale };
+    }
+  }
+
+  return { voice: null, resolvedLocale: primaryLocale };
+}
+
+async function speakWithBrowserFallback(
   text: string,
   language: LanguageCode,
-  voices: SpeechSynthesisVoice[],
-  sessionId: number,
+  gen: number,
+  alreadyStarted: boolean,
   callbacks?: {
     onStart?: () => void;
     onEnd?: () => void;
-    onError?: (message: string) => void;
+    onError?: () => void;
   }
-): boolean {
-  if (sessionId !== activeSpeechSession) return false;
-
-  if (voices.length === 0) {
-    callbacks?.onError?.(
-      "No speech voices found in this browser/OS. Install OS text-to-speech voices (or speech-dispatcher + espeak-ng on Linux)."
-    );
-    return false;
+): Promise<void> {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    if (gen === playbackGeneration) callbacks?.onError?.();
+    return;
   }
 
-  const locale = LANGUAGES[language].speechLocale;
-  const voice = pickBestVoice(locale, voices);
-  if (!voice) {
-    callbacks?.onError?.(
-      `No ${LANGUAGES[language].label} (${locale}) voice is installed in this browser/OS. Install that language voice or switch to English.`
-    );
-    return false;
-  }
+  const { voice, resolvedLocale } = await pickBestBrowserVoice(language);
+  if (gen !== playbackGeneration) return;
 
+  window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = locale;
-  utterance.voice = voice;
-  utterance.rate = 0.88;
+  utterance.lang = resolvedLocale;
+  utterance.rate = 0.92;
   utterance.pitch = 1.0;
   utterance.volume = 1.0;
 
+  if (voice) {
+    utterance.voice = voice;
+  }
+
   utterance.onstart = () => {
-    if (sessionId === activeSpeechSession) {
+    if (gen === playbackGeneration && !alreadyStarted) {
       callbacks?.onStart?.();
     }
   };
   utterance.onend = () => {
-    if (sessionId === activeSpeechSession) {
-      callbacks?.onEnd?.();
-    }
+    if (gen === playbackGeneration) callbacks?.onEnd?.();
   };
-  utterance.onerror = (event) => {
-    if (sessionId !== activeSpeechSession) return;
-    if (event.error === "canceled" || event.error === "interrupted") {
-      callbacks?.onEnd?.();
-      return;
-    }
-    callbacks?.onError?.(
-      `Audio playback failed (${event.error || "unknown error"}). Check your browser or OS audio output.`
-    );
+  utterance.onerror = () => {
+    if (gen === playbackGeneration) callbacks?.onEnd?.();
   };
 
   window.speechSynthesis.speak(utterance);
-  return true;
+}
+
+function cacheAudioUrl(key: string, url: string): void {
+  if (audioUrlCache.has(key)) {
+    audioUrlCache.delete(key);
+  }
+  audioUrlCache.set(key, url);
+  if (audioUrlCache.size > AUDIO_CACHE_MAX) {
+    const oldestKey = audioUrlCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      const oldestUrl = audioUrlCache.get(oldestKey);
+      if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+      audioUrlCache.delete(oldestKey);
+    }
+  }
+}
+
+async function playNeuralAudio(
+  text: string,
+  language: LanguageCode,
+  gen: number,
+  callbacks?: {
+    onStart?: () => void;
+    onEnd?: () => void;
+    onError?: () => void;
+  }
+): Promise<void> {
+  const cacheKey = `${language}::${text}`;
+  let objectUrl = audioUrlCache.get(cacheKey);
+
+  if (!objectUrl) {
+    const controller = new AbortController();
+    activeAbortController = controller;
+
+    try {
+      const res = await fetch(`${FASTAPI_BASE_URL}/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, language }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`TTS HTTP ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      if (gen !== playbackGeneration) return;
+
+      objectUrl = URL.createObjectURL(blob);
+      cacheAudioUrl(cacheKey, objectUrl);
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError" || gen !== playbackGeneration) {
+        return;
+      }
+      await speakWithBrowserFallback(text, language, gen, true, callbacks);
+      return;
+    } finally {
+      if (activeAbortController === controller) {
+        activeAbortController = null;
+      }
+    }
+  }
+
+  if (gen !== playbackGeneration || !objectUrl) return;
+
+  const audio = new Audio(objectUrl);
+  activeAudio = audio;
+
+  audio.onended = () => {
+    if (activeAudio === audio) activeAudio = null;
+    if (gen === playbackGeneration) callbacks?.onEnd?.();
+  };
+
+  audio.onerror = () => {
+    if (activeAudio === audio) activeAudio = null;
+    if (gen === playbackGeneration) {
+      void speakWithBrowserFallback(text, language, gen, true, callbacks);
+    }
+  };
+
+  try {
+    await audio.play();
+  } catch {
+    if (activeAudio === audio) activeAudio = null;
+    if (gen === playbackGeneration) {
+      await speakWithBrowserFallback(text, language, gen, true, callbacks);
+    }
+  }
 }
 
 export function speakText(
@@ -115,42 +248,32 @@ export function speakText(
   callbacks?: {
     onStart?: () => void;
     onEnd?: () => void;
-    onError?: (message: string) => void;
+    onError?: () => void;
   }
 ): boolean {
-  if (!isSpeechSynthesisSupported()) {
-    callbacks?.onError?.("Text-to-speech is not supported in this browser.");
+  stopSpeaking();
+
+  const cleaned = text.trim();
+  if (!cleaned) {
+    callbacks?.onError?.();
     return false;
   }
-  if (!text.trim()) {
-    callbacks?.onError?.("No spoken instruction text is available for this medicine.");
+
+  const gen = playbackGeneration;
+
+  if (FASTAPI_BASE_URL.length > 0) {
+    callbacks?.onStart?.();
+    void playNeuralAudio(cleaned, language, gen, callbacks);
+    return true;
+  }
+
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    callbacks?.onError?.();
     return false;
   }
 
-  const sessionId = ++activeSpeechSession;
-  const synth = window.speechSynthesis;
-  const hadActiveSpeech = synth.speaking || synth.pending;
-  if (hadActiveSpeech) {
-    synth.cancel();
-  }
-
-  const immediateVoices = synth.getVoices();
-  if (!hadActiveSpeech && immediateVoices.length > 0) {
-    return dispatchUtterance(text, language, immediateVoices, sessionId, callbacks);
-  }
-
-  const startSpeech = async () => {
-    // Brief delay after cancel() avoids a Chromium race that drops the new utterance
-    if (hadActiveSpeech) {
-      await new Promise((r) => setTimeout(r, 60));
-    }
-    if (sessionId !== activeSpeechSession) return;
-
-    const voices = await getVoicesWithWait();
-    dispatchUtterance(text, language, voices, sessionId, callbacks);
-  };
-
-  void startSpeech();
+  callbacks?.onStart?.();
+  void speakWithBrowserFallback(cleaned, language, gen, true, callbacks);
   return true;
 }
 
