@@ -1,0 +1,207 @@
+{
+  "default_share_code": "DEMO01",
+  "profile": {
+    "share_code": "DEMO01",
+    "patient_name": "Kamla Nani",
+    "age": 72,
+    "preferred_language": "hi",
+    "caregiver_name": "Aarav Sharma",
+    "emergency_contact": {
+      "name": "Aarav Sharma",
+      "relation": "Son (Primary Caregiver)",
+      "phone": "+91 98201 44510",
+      "whatsapp_phone": "919820144510"
+    }
+  },
+  "scan_responses": {
+    "prescription": {
+      "document_type": "Prescription",
+      "doctor_or_clinic": "Dr. Rajesh Kulkarni — Sunrise Family Clinic, Pune",
+      "general_warning": "Mock dev scan: 2 medicines flagged for caregiver verification (handwritten timing / missing strength).",
+      "medicines": [
+        {
+          "id": "mock-draft-1",
+          "medicine_name": "Dolo 650",
+          "dosage": "650 mg (1 tablet)",
+          "frequency_code": "1-0-1",
+          "meal_relation": "After Food",
+          "duration_days": "5 days",
+          "ai_accuracy": "High",
+          "confidence_score": 0.95,
+          "needs_review": false,
+          "ai_accuracy_reason": "Clearly printed brand name, strength, and 1-0-1 schedule.",
+          "pill_appearance": "White oval tablet in blue-and-silver strip",
+          "simple_explanation_en": "Take 1 white oval Dolo 650 tablet in the morning after breakfast and at night after dinner for fever or pain.",
+          "simple_explanation_hi": "बुखार या दर्द के लिए सुबह नाश्ते के बाद और रात के खाने के बाद डोलो 650 की 1 सफेद गोली पानी के साथ लें।",
+          "simple_explanation_mr": "ताप किंवा दुखण्यासाठी सकाळी नाश्त्यानंतर आणि रात्री जेवणानंतर डोलो 650 ची 1 पांढरी गोळी पाण्यासोबत घ्या.",
+          "strip_image_url": "/src/assets/images/strip_dolo_650_1795586273226.jpg",
+          "manually_verified": false
+        },
+        {
+          "id": "mock-draft-2",
+          "medicine_name": "Pan-D",
+          "dosage": "40 mg + 30 mg (1 capsule)",
+          "frequency_code": "1-0-0",
+          "meal_relation": "Before Food",
+          "duration_days": "14 days",
+          "ai_accuracy": "Medium",
+          "confidence_score": 0.74,
+          "needs_review": true,
+          "ai_accuracy_reason": "Handwritten 'BBF' (before breakfast) note — confirm empty-stomach timing.",
+          "pill_appearance": "Blue and white capsule in copper-silver blister strip",
+          "simple_explanation_en": "Take 1 blue and white Pan-D capsule in the morning on an empty stomach before breakfast.",
+          "simple_explanation_hi": "सुबह खाली पेट नाश्ते से पहले तांबे की पट्टी से 1 नीला-सफेद पैन-डी कैप्सूल लें।",
+          "simple_explanation_mr": "सकाळी उपाशीपोटी नाश्त्याआधी तांब्याच्या पट्टीतील 1 निळे-पांढरे पॅन-डी कॅप्सूल घ्या.",
+          "strip_image_url": "/src/assets/images/strip_pan_d_1795586270413.jpg",
+          "manually_verified": false
+        },
+        {
+          "id": "mock-draft-3",
+          "medicine_name": "Atorva",
+          "dosage": "10 mg (1 tablet)",
+          "frequency_code": "0-0-1",
+          "meal_relation": "After Food",
+          "duration_days": "30 days",
+          "ai_accuracy": "Low",
+          "confidence_score": 0.58,
+          "needs_review": true,
+          "ai_accuracy_reason": "Strength digit smudged on prescription ('10' vs '20') — caregiver confirmation required.",
+          "pill_appearance": "Small round white tablet in silver strip with teal band",
+          "simple_explanation_en": "Take 1 small white Atorva 10mg tablet at night after dinner.",
+          "simple_explanation_hi": "रात के खाने के बाद हरी-नीली पट्टी से 1 छोटी सफेद एटोर्वा 10 मिलीग्राम गोली लें।",
+          "simple_explanation_mr": "रात्री जेवणानंतर हिरव्या पट्टीतील 1 लहान पांढरी अ‍ॅटोर्वा 10 एमजी गोळी घ्या.",
+          "strip_image_url": "/src/assets/images/strip_atorvastatin_1795586272394.jpg",
+          "manually_verified": false
+        }
+      ]
+    },
+    "strip": {
+      "document_type": "Medicine Strip",
+      "doctor_or_clinic": "",
+      "general_warning": "Standalone blister strip detected. Frequency is not printed on foil — verify dosage timing before publishing.",
+      "medicines": [
+        {
+          "id": "mock-strip-1",
+          "medicine_name": "Paracetamol 650mg (Dolo-650)",
+          "dosage": "650 mg (1 tablet)",
+          "frequency_code": "1-0-0",
+          "meal_relation": "After Food",
+          "duration_days": "5 days",
+          "ai_accuracy": "Medium",
+          "confidence_score": 0.72,
+          "needs_review": true,
+          "ai_accuracy_reason": "Schedule timing is not printed on the blister strip and must be verified by the caregiver.",
+          "pill_appearance": "White oval tablet in blue-and-silver foil strip",
+          "simple_explanation_en": "Take 1 white oval Paracetamol 650mg tablet after food as instructed by your doctor.",
+          "simple_explanation_hi": "डॉक्टर की सलाह के अनुसार खाना खाने के बाद पैरासिटामॉल 650 मिलीग्राम की 1 सफेद गोली लें।",
+          "simple_explanation_mr": "डॉक्टरांच्या सल्ल्यानुसार जेवणानंतर पॅरासिटामॉल 650 एमजी ची 1 पांढरी गोळी घ्या.",
+          "strip_image_url": "/src/assets/images/strip_dolo_650_1795586273226.jpg",
+          "manually_verified": false
+        }
+      ]
+    }
+  },
+  "verified_medicines": [
+    {
+      "id": "med-paracetamol-650",
+      "share_code": "DEMO01",
+      "medicine_name": "Paracetamol 650mg",
+      "dosage": "650 mg (1 tablet)",
+      "frequency_code": "1-0-1",
+      "slots": [
+        { "slot": "Morning", "time_label": "08:30 AM", "dose_count": 1 },
+        { "slot": "Night", "time_label": "09:00 PM", "dose_count": 1 }
+      ],
+      "meal_relation": "After Food",
+      "duration_days": "5 days",
+      "ai_accuracy": "High",
+      "confidence_score": 0.96,
+      "ai_accuracy_reason": "Clearly printed foil blister label and dosage schedule.",
+      "caregiver_verified": true,
+      "verified_at": "2026-11-25T08:00:00.000Z",
+      "verified_by": "Aarav Sharma",
+      "pill_appearance": "White oval tablet from the silver strip with blue band",
+      "simple_explanation_en": "Take 1 white oval Paracetamol 650mg tablet after breakfast and after dinner for mild fever or body ache.",
+      "simple_explanation_hi": "नाश्ते और रात के खाने के बाद नीली पट्टी वाली पैरासिटामोल 650 मिलीग्राम की 1 सफेद गोली पानी के साथ लें।",
+      "simple_explanation_mr": "नाश्त्यानंतर आणि रात्रीच्या जेवणानंतर निळ्या पट्टीतील पॅरासिटामॉल 650 एमजी ची 1 पांढरी गोळी पाण्यासोबत घ्या.",
+      "strip_image_url": "/src/assets/images/strip_dolo_650_1795586273226.jpg",
+      "taken_slots_today": ["Morning"],
+      "doctor_or_clinic": "Sunrise Family Clinic"
+    },
+    {
+      "id": "med-pan-d",
+      "share_code": "DEMO01",
+      "medicine_name": "Pan-D Capsule",
+      "dosage": "40 mg + 30 mg (1 capsule)",
+      "frequency_code": "1-0-0",
+      "slots": [
+        { "slot": "Morning", "time_label": "07:00 AM", "dose_count": 1 }
+      ],
+      "meal_relation": "Before Food",
+      "duration_days": "14 days",
+      "ai_accuracy": "Medium",
+      "confidence_score": 0.78,
+      "ai_accuracy_reason": "Handwritten empty-stomach note confirmed by caregiver.",
+      "caregiver_verified": true,
+      "verified_at": "2026-11-25T08:05:00.000Z",
+      "verified_by": "Aarav Sharma",
+      "pill_appearance": "Blue and white capsule from the copper-colored blister strip",
+      "simple_explanation_en": "Take 1 blue and white Pan-D capsule in the morning before breakfast.",
+      "simple_explanation_hi": "सुबह नाश्ते से पहले तांबे के रंग की पट्टी से 1 नीला-सफेद पैन-डी कैप्सूल लें।",
+      "simple_explanation_mr": "सकाळी नाश्त्याआधी तांब्याच्या रंगाच्या पट्टीतील 1 निळे-पांढरे पॅन-डी कॅप्सूल घ्या.",
+      "strip_image_url": "/src/assets/images/strip_pan_d_1795586270413.jpg",
+      "taken_slots_today": [],
+      "doctor_or_clinic": "Sunrise Family Clinic"
+    },
+    {
+      "id": "med-atorva-10",
+      "share_code": "DEMO01",
+      "medicine_name": "Atorva 10mg",
+      "dosage": "10 mg (1 tablet)",
+      "frequency_code": "0-0-1",
+      "slots": [
+        { "slot": "Night", "time_label": "09:00 PM", "dose_count": 1 }
+      ],
+      "meal_relation": "After Food",
+      "duration_days": "30 days",
+      "ai_accuracy": "High",
+      "confidence_score": 0.94,
+      "ai_accuracy_reason": "Printed strip strength and doctor schedule verified.",
+      "caregiver_verified": true,
+      "verified_at": "2026-11-25T08:10:00.000Z",
+      "verified_by": "Aarav Sharma",
+      "pill_appearance": "Small round white tablet in silver strip with teal band",
+      "simple_explanation_en": "Take 1 small round white Atorva 10mg tablet at night after dinner.",
+      "simple_explanation_hi": "रात के खाने के बाद हरे-नीले निशान वाली पट्टी से 1 छोटी सफेद एटोर्वा 10 मिलीग्राम गोली लें।",
+      "simple_explanation_mr": "रात्रीच्या जेवणानंतर हिरव्या पट्टीतील 1 लहान पांढरी अ‍ॅटोर्वा 10 एमजी गोळी घ्या.",
+      "strip_image_url": "/src/assets/images/strip_atorvastatin_1795586272394.jpg",
+      "taken_slots_today": [],
+      "doctor_or_clinic": "Sunrise Family Clinic"
+    }
+  ],
+  "vitals": [
+    {
+      "id": "vital-mock-1",
+      "share_code": "DEMO01",
+      "recorded_at": "2026-11-25T07:30:00.000Z",
+      "temperature_f": 98.4,
+      "bp_systolic": 124,
+      "bp_diastolic": 78,
+      "weight_kg": 61.5,
+      "notes": "Morning check after tea, feeling comfortable.",
+      "flagged": false
+    },
+    {
+      "id": "vital-mock-2",
+      "share_code": "DEMO01",
+      "recorded_at": "2026-11-24T19:45:00.000Z",
+      "temperature_f": 100.8,
+      "bp_systolic": 146,
+      "bp_diastolic": 92,
+      "weight_kg": 61.8,
+      "notes": "Mild fever and elevated BP in the evening — sample flagged vital for UI testing.",
+      "flagged": true,
+      "flag_reason": "Temperature (100.8°F) and Blood Pressure (146/92 mmHg) above normal range"
+    }
+  ]
+}

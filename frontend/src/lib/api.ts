@@ -1,4 +1,5 @@
 import { GENERATED_ASSETS, VITALS_RANGES } from "../config";
+import devMockData from "../mocks/devMockData.json";
 import {
   AccuracyLevel,
   ConfirmMedicinesRequest,
@@ -29,11 +30,19 @@ import {
 import { buildSummaryText, buildWhatsAppSummaryUrl } from "../utils/whatsapp";
 
 const FASTAPI_BASE_URL = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
+const USE_MOCK_DATA =
+  String(import.meta.env.VITE_USE_MOCK_DATA || "").trim().toLowerCase() === "true";
 
 export function getApiMode(): { connectedToFastApi: boolean; baseUrl: string } {
+  if (FASTAPI_BASE_URL) {
+    return {
+      connectedToFastApi: true,
+      baseUrl: FASTAPI_BASE_URL,
+    };
+  }
   return {
-    connectedToFastApi: FASTAPI_BASE_URL.length > 0,
-    baseUrl: FASTAPI_BASE_URL || "/api (Built-in Preview)",
+    connectedToFastApi: false,
+    baseUrl: USE_MOCK_DATA ? "Mock JSON (devMockData.json)" : "/api (Built-in Preview)",
   };
 }
 
@@ -304,6 +313,29 @@ export async function scanPrescription(params: {
       general_warning: String(payload.general_warning ?? warnings),
       medicines: rawMeds.map((m, idx) =>
         mapRawScannedMedicine(m, idx, params.overrideStripPhoto)
+      ),
+    };
+  }
+
+  if (USE_MOCK_DATA) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const isStrip =
+      Boolean(params.overrideStripPhoto) ||
+      (params.scanHint || "").toLowerCase().includes("strip");
+    const mockPayload = isStrip
+      ? devMockData.scan_responses.strip
+      : devMockData.scan_responses.prescription;
+
+    return {
+      document_type: mockPayload.document_type,
+      doctor_or_clinic: mockPayload.doctor_or_clinic,
+      general_warning: mockPayload.general_warning,
+      medicines: mockPayload.medicines.map((m, idx) =>
+        mapRawScannedMedicine(
+          m as unknown as Record<string, unknown>,
+          idx,
+          params.overrideStripPhoto
+        )
       ),
     };
   }
