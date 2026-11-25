@@ -146,10 +146,17 @@ pip install -r requirements-dev.txt # Install pytest + httpx for automated tests
 pytest tests/test_backend.py -v     # Run unit and API integration tests
 ```
 
-## Deployment notes
+## Deployment & Branch Workflow
 
-- The backend includes a `Procfile` for platforms such as Render or Railway. Configure the service root as `backend/` and provide the required environment variables.
-- For a hosted database, set `DATABASE_URL` to a PostgreSQL connection string. `backend/schema.sql` contains the database DDL; the application also initializes tables on startup.
-- Build the frontend with `npm run build` in `frontend/`. Its Express server serves the `dist/` directory when run with `NODE_ENV=production`.
+### Cloud Deployment
+- **Database (Neon PostgreSQL):** Create a Neon project, optionally run [backend/schema.sql](backend/schema.sql) (`init_db()` also creates tables idempotently on startup), and set `DATABASE_URL` with `?sslmode=require`.
+- **Backend (Render / Railway):** Set root directory to `backend/`, start command from [backend/Procfile](backend/Procfile) (`uvicorn engine:app --host 0.0.0.0 --port $PORT`), and set `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-3.5-flash`, `DATABASE_URL`, and `CORS_ORIGINS` (your frontend origin).
+- **Frontend (Vercel / Render):** Set root directory to `frontend/`, build command `npm run build`, output directory `dist/`, and set `VITE_API_URL` to your deployed backend URL. (Or run `NODE_ENV=production npm start` with `frontend/server.ts`.)
 
-See [CONTEXT.md](CONTEXT.md) for the detailed architecture, data model, API contract, and scheduling and safety rules.
+### Branch Workflow
+- `main` — stable integrated branch (runs `.github/workflows/codeql.yml` on push/PR).
+- `backend` — FastAPI API, models, scheduler, and `pytest` changes (`backend/`).
+- `frontend` — React UI, TypeScript types, and API client changes (`frontend/`).
+- `docs` — documentation and demo runbooks (`README.md`, `docs/`).
+
+See [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for the live demo walkthrough.
