@@ -108,19 +108,23 @@ async function pickBestBrowserVoice(
   return { voice: null, resolvedLocale: primaryLocale };
 }
 
+export interface SpeechCallbacks {
+  onStart?: () => void;
+  onEnd?: () => void;
+  onError?: (message: string) => void;
+}
+
 async function speakWithBrowserFallback(
   text: string,
   language: LanguageCode,
   gen: number,
   alreadyStarted: boolean,
-  callbacks?: {
-    onStart?: () => void;
-    onEnd?: () => void;
-    onError?: () => void;
-  }
+  callbacks?: SpeechCallbacks
 ): Promise<void> {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-    if (gen === playbackGeneration) callbacks?.onError?.();
+    if (gen === playbackGeneration) {
+      callbacks?.onError?.("Browser speech synthesis is not supported in this browser.");
+    }
     return;
   }
 
@@ -172,11 +176,7 @@ async function playNeuralAudio(
   text: string,
   language: LanguageCode,
   gen: number,
-  callbacks?: {
-    onStart?: () => void;
-    onEnd?: () => void;
-    onError?: () => void;
-  }
+  callbacks?: SpeechCallbacks
 ): Promise<void> {
   const cacheKey = `${language}::${text}`;
   let objectUrl = audioUrlCache.get(cacheKey);
@@ -245,17 +245,13 @@ async function playNeuralAudio(
 export function speakText(
   text: string,
   language: LanguageCode,
-  callbacks?: {
-    onStart?: () => void;
-    onEnd?: () => void;
-    onError?: () => void;
-  }
+  callbacks?: SpeechCallbacks
 ): boolean {
   stopSpeaking();
 
   const cleaned = text.trim();
   if (!cleaned) {
-    callbacks?.onError?.();
+    callbacks?.onError?.("No spoken instruction available for this medicine.");
     return false;
   }
 
@@ -268,7 +264,7 @@ export function speakText(
   }
 
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-    callbacks?.onError?.();
+    callbacks?.onError?.("Browser speech synthesis is not supported in this browser.");
     return false;
   }
 
