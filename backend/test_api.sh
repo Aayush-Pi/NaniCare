@@ -159,7 +159,12 @@ echo "Verified WhatsApp Deep Link:"
 echo "${WA_URL}"
 
 echo ""
-echo "[13/13] DELETE /vitals/${VITAL_ID} (remove disposable test vital)"
+echo "[13/14] DELETE /vitals/${VITAL_ID} (remove disposable test vital)"
 curl -fsS -X DELETE "${BASE_URL}/vitals/${VITAL_ID}" | pp
+
 echo ""
-echo "All 13 NaniCare backend smoke tests PASSED!"
+echo "[14/14] GET /profiles & DELETE /profile/NANI99/medicines (list profiles & flush test schedule)"
+curl -fsS "${BASE_URL}/profiles" | pp
+curl -fsS -X DELETE "${BASE_URL}/profile/NANI99/medicines" | pp
+echo ""
+echo "All 14 NaniCare backend smoke tests PASSED!"

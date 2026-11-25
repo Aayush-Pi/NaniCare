@@ -296,3 +296,62 @@ def test_vitals_create_history_delete_and_summary(client: TestClient):
 
     del_again = client.delete(f"/vitals/{vital_id}")
     assert del_again.status_code == 404
+
+
+def test_list_profiles_replace_and_flush_medicines(client: TestClient):
+    profiles = client.get("/profiles").json()
+    assert any(p["share_code"] == "DEMO01" for p in profiles)
+
+    # Append a new medicine to DEMO01 (replace_existing=False)
+    append_res = client.post(
+        "/medicines/confirm",
+        json={
+            "share_code": "DEMO01",
+            "replace_existing": False,
+            "medicines": [
+                {
+                    "brand_name": "ExtraMed-10",
+                    "strength": "10 mg",
+                    "dosage_form": "tablet",
+                    "dosage_pattern": "0-0-1",
+                    "meal_relation": "after_food",
+                }
+            ],
+        },
+    )
+    assert append_res.status_code == 201
+    after_append = client.get("/medicines/DEMO01").json()
+    assert any(m["brand_name"] == "ExtraMed-10" for m in after_append)
+    assert len(after_append) > 1
+
+    # Replace existing medicines (replace_existing=True)
+    replace_res = client.post(
+        "/medicines/confirm",
+        json={
+            "share_code": "DEMO01",
+            "replace_existing": True,
+            "medicines": [
+                {
+                    "brand_name": "FreshOnly-500",
+                    "strength": "500 mg",
+                    "dosage_form": "tablet",
+                    "dosage_pattern": "1-0-0",
+                    "meal_relation": "after_food",
+                }
+            ],
+        },
+    )
+    assert replace_res.status_code == 201
+    after_replace = client.get("/medicines/DEMO01").json()
+    assert [m["brand_name"] for m in after_replace] == ["FreshOnly-500"]
+
+    # Flush all active medicines for DEMO01
+    flush_res = client.delete("/profile/DEMO01/medicines")
+    assert flush_res.status_code == 200
+    assert flush_res.json() == {
+        "flushed": True,
+        "share_code": "DEMO01",
+        "deactivated_count": 1,
+    }
+    assert client.get("/medicines/DEMO01").json() == []
+
