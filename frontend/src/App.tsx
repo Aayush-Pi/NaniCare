@@ -135,22 +135,26 @@ export default function App() {
     void saveProfileContact(shareCode, contact);
   }
 
+  const isAssistiveMode = route === "nani";
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:rounded-md focus:bg-teal-700 focus:text-white focus:font-bold"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:rounded-md focus:bg-blue-700 focus:text-white focus:font-bold"
       >
         Skip to main content
       </a>
 
-      <TopBar
-        route={route}
-        onNavigate={handleNavigate}
-        theme={theme}
-        onToggleTheme={handleToggleTheme}
-        backendBadge={backendBadge}
-      />
+      {!isAssistiveMode && (
+        <TopBar
+          route={route}
+          onNavigate={handleNavigate}
+          theme={theme}
+          onToggleTheme={handleToggleTheme}
+          backendBadge={backendBadge}
+        />
+      )}
 
       <div className="flex-1">
         {route === "select" && (
@@ -185,6 +189,7 @@ export default function App() {
         {route === "nani" && (
           <NaniPage
             shareCode={shareCode}
+            patientName={patientName}
             onChangeShareCode={setShareCode}
             verifiedMedicines={verifiedMedicines}
             emergencyContact={emergencyContact}
@@ -205,37 +210,39 @@ export default function App() {
         )}
       </div>
 
-      <footer className="border-t border-slate-200 dark:border-slate-800 pt-5 pb-24 md:pb-5 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-400">
-          <p className="text-center sm:text-left">
-            NaniCare · Caregiver-verified prescription guidance. Always follow your doctor&apos;s
-            medical advice.
-          </p>
-          <div className="flex items-center gap-4">
-            <button
-              type="button"
-              onClick={() => handleNavigate("nani")}
-              className="min-h-[36px] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-            >
-              Grandparents Mode
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavigate("caregiver")}
-              className="min-h-[36px] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-            >
-              Caregiver Mode
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavigate("vitals")}
-              className="min-h-[36px] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-            >
-              Vitals
-            </button>
+      {!isAssistiveMode && (
+        <footer className="border-t border-slate-200 dark:border-slate-800 pt-5 pb-24 md:pb-5 px-4 sm:px-6 lg:px-8">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-400">
+            <p className="text-center sm:text-left">
+              NaniCare · Caregiver-verified prescription guidance. Always follow your doctor&apos;s
+              medical advice.
+            </p>
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => handleNavigate("nani")}
+                className="min-h-[36px] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+              >
+                Grandparents Mode
+              </button>
+              <button
+                type="button"
+                onClick={() => handleNavigate("caregiver")}
+                className="min-h-[36px] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+              >
+                Caregiver Mode
+              </button>
+              <button
+                type="button"
+                onClick={() => handleNavigate("vitals")}
+                className="min-h-[36px] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+              >
+                Vitals
+              </button>
+            </div>
           </div>
-        </div>
-      </footer>
+        </footer>
+      )}
     </div>
   );
 }

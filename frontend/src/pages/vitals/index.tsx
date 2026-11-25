@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CalendarClock, Pill } from "lucide-react";
+import { VitalsCharts } from "../../components/VitalsCharts";
 import { VitalsLogger } from "../../components/VitalsLogger";
 import { WhatsAppSummaryCard } from "../../components/WhatsAppSummaryCard";
 import {
   deleteVitalEntry,
   fetchProfileSummary,
   fetchRefills,
+  fetchTrends,
   logVital,
 } from "../../lib/api";
 import {
   CreateVitalRequest,
   ProfileSummaryResponse,
   RefillStatusItem,
+  TrendsResponse,
 } from "../../types/api";
 
 interface VitalsPageProps {
@@ -29,6 +32,7 @@ export function VitalsPage({
 }: VitalsPageProps) {
   const [summary, setSummary] = useState<ProfileSummaryResponse | null>(null);
   const [refills, setRefills] = useState<RefillStatusItem[]>([]);
+  const [trends, setTrends] = useState<TrendsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -37,12 +41,14 @@ export function VitalsPage({
     setIsLoading(true);
     setErrorMessage("");
     try {
-      const [data, refillList] = await Promise.all([
+      const [data, refillList, trendData] = await Promise.all([
         fetchProfileSummary(shareCode),
         fetchRefills(shareCode).catch(() => []),
+        fetchTrends(shareCode, 7).catch(() => null),
       ]);
       setSummary(data);
       setRefills(refillList);
+      setTrends(trendData);
     } catch (err: unknown) {
       setErrorMessage(
         err instanceof Error ? err.message : "Could not load vitals summary."
@@ -120,6 +126,20 @@ export function VitalsPage({
           {errorMessage}
         </div>
       )}
+
+      <VitalsCharts
+        vitals={summary?.vitals || []}
+        trends={trends}
+        todayAdherence={
+          summary
+            ? {
+                taken: summary.adherence_taken,
+                total: summary.adherence_total,
+                percent: summary.adherence_percent,
+              }
+            : undefined
+        }
+      />
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
         <div className="xl:col-span-7">

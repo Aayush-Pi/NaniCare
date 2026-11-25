@@ -202,3 +202,21 @@ export interface RefillStatusItem {
   message_hi: string;
   message_mr: string;
 }
+
+/**
+ * Mirrors GET /profile/{share_code}/trends
+ */
+export interface DailyAdherencePoint {
+  date: string;
+  taken: number;
+  total: number;
+  adherence_percent: number;
+}
+
+export interface TrendsResponse {
+  share_code: string;
+  elder_name: string;
+  days: number;
+  average_adherence_percent: number;
+  daily_adherence: DailyAdherencePoint[];
+}

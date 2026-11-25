@@ -25,6 +25,7 @@ import {
   ScheduleResponse,
   StripVerifyResult,
   TimeSlotKey,
+  TrendsResponse,
   VerifiedMedicine,
   VitalLogEntry,
 } from "../types/api";
@@ -1153,5 +1154,26 @@ export async function fetchRefills(shareCode: string): Promise<RefillStatusItem[
     return Array.isArray(data.items) ? data.items : [];
   } catch {
     return [];
+  }
+}
+
+/**
+ * GET /profile/{share_code}/trends
+ * Returns 7-day adherence history, or null when the backend is not connected.
+ */
+export async function fetchTrends(
+  shareCode: string,
+  days = 7
+): Promise<TrendsResponse | null> {
+  const normalizedCode = shareCode.trim().toUpperCase();
+  if (!FASTAPI_BASE_URL) return null;
+  try {
+    const res = await fetch(
+      `${FASTAPI_BASE_URL}/profile/${encodeURIComponent(normalizedCode)}/trends?days=${days}`
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as TrendsResponse;
+  } catch {
+    return null;
   }
 }
