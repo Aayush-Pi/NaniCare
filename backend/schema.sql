@@ -92,3 +92,21 @@ CREATE TABLE IF NOT EXISTS vitals_logs (
 
 CREATE INDEX IF NOT EXISTS idx_vitals_logs_profile_recorded
     ON vitals_logs (profile_id, recorded_at DESC);
+
+-- 5. Indian Medicine Visual & Reference Catalog (zero-token local cache)
+CREATE TABLE IF NOT EXISTS medicine_catalog (
+    id                  BIGSERIAL PRIMARY KEY,
+    normalized_key      VARCHAR(120) NOT NULL UNIQUE,
+    brand_name          VARCHAR(160) NOT NULL,
+    aliases             JSONB NOT NULL DEFAULT '[]'::jsonb,
+    generic_name        VARCHAR(160),
+    therapeutic_class   VARCHAR(120),
+    dosage_form         VARCHAR(48) NOT NULL DEFAULT 'tablet',
+    visual_spec         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source              VARCHAR(32) NOT NULL DEFAULT 'seed_catalog',
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_medicine_catalog_key
+    ON medicine_catalog (normalized_key);

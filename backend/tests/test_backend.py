@@ -355,3 +355,201 @@ def test_list_profiles_replace_and_flush_medicines(client: TestClient):
     }
     assert client.get("/medicines/DEMO01").json() == []
 
+
+def test_visuals_svg_renderer_and_xss_escaping():
+    import base64
+    import visuals
+
+    shapes = [
+        "round",
+        "oval",
+        "oblong",
+        "capsule_bicolor",
+        "bottle",
+        "dropper",
+        "inhaler",
+        "tube",
+        "vial",
+    ]
+    for shape in shapes:
+        uri = visuals.render_medicine_svg(
+            brand_name="<script>Dolo</script>",
+            strength="650 mg",
+            visual_spec={
+                "shape": shape,
+                "primary_color": "#FEF3C7",
+                "secondary_color": "#2563EB",
+                "strip_accent": "#0284C7",
+                "imprint": "650",
+            },
+        )
+        assert uri.startswith("data:image/svg+xml;base64,")
+        assert len(uri) < 2800
+        decoded = base64.b64decode(uri.split(",", 1)[1]).decode("utf-8")
+        assert decoded.startswith("<svg ")
+        assert "<script>" not in decoded
+        assert "&lt;script&gt;" in decoded
+
+
+def test_catalog_seed_search_lookup_and_confirm_autocache(client: TestClient):
+    # Pre-seeded catalog returns hits with 0 AI tokens
+    search_res = client.get("/catalog/search?q=dolo&limit=5")
+    assert search_res.status_code == 200
+    items = search_res.json()
+    assert len(items) >= 1
+    assert any("Dolo" in item["brand_name"] for item in items)
+    assert items[0]["strip_thumbnail"].startswith("data:image/svg+xml;base64,")
+
+    # POST /catalog/lookup hits local DB cache for seeded brand
+    hit_res = client.post(
+        "/catalog/lookup",
+        json={"query": "Pan-D", "dosage_form": "capsule", "allow_ai": False},
+    )
+    assert hit_res.status_code == 200
+    hit_body = hit_res.json()
+    assert hit_body["found"] is True
+    assert hit_body["cache_hit"] is True
+    assert hit_body["visual_source"] == "catalog_verified"
+    assert hit_body["entry"]["visual_spec"]["shape"] == "capsule_bicolor"
+
+    # Unknown brand falls back cleanly when AI disabled
+    miss_res = client.post(
+        "/catalog/lookup",
+        json={"query": "ZetaBrandX-100", "dosage_form": "syrup", "allow_ai": False},
+    )
+    assert miss_res.status_code == 200
+    assert miss_res.json()["visual_source"] == "generic_fallback"
+    assert miss_res.json()["entry"]["visual_spec"]["shape"] == "bottle"
+
+    # Confirming an unknown medicine auto-caches it into medicine_catalog
+    confirm_res = client.post(
+        "/medicines/confirm",
+        json={
+            "share_code": "DEMO01",
+            "replace_existing": False,
+            "medicines": [
+                {
+                    "brand_name": "ZetaBrandX-100",
+                    "strength": "100 mg",
+                    "dosage_form": "syrup",
+                    "dosage_pattern": "1-0-1",
+                    "meal_relation": "after_food",
+                }
+            ],
+        },
+    )
+    assert confirm_res.status_code == 201
+    assert confirm_res.json()["medicines"][0]["strip_thumbnail"].startswith(
+        "data:image/svg+xml;base64,"
+    )
+
+    cached_res = client.post(
+        "/catalog/lookup",
+        json={"query": "ZetaBrandX-100", "dosage_form": "syrup", "allow_ai": False},
+    )
+    assert cached_res.status_code == 200
+    assert cached_res.json()["cache_hit"] is True
+
+
+def test_allergy_conflict_detection(client: TestClient):
+    # Direct scheduler unit test
+    per_med, regimen = scheduler.evaluate_medicine_safety(
+        [
+            {
+                "brand_name": "Augmentin 625 Duo",
+                "generic_name": "Amoxicillin + Clavulanic Acid",
+                "strength": "625 mg",
+                "dosage_pattern": "1-0-1",
+                "meal_relation": "after_food",
+                "confidence": 0.95,
+                "low_confidence_fields": [],
+            }
+        ],
+        known_allergies=["Penicillin"],
+    )
+    assert any(f.code == "ALLERGY_CONFLICT" and f.severity == "critical" for f in per_med[0])
+    assert any(f.code == "ALLERGY_CONFLICT" for f in regimen)
+
+    # API confirm test with profile allergy
+    prof = client.post(
+        "/profile",
+        json={
+            "share_code": "ALRG01",
+            "elder_name": "Mohan Dada",
+            "preferred_language": "hi",
+            "known_allergies": ["Sulfa drugs"],
+        },
+    )
+    assert prof.status_code == 201
+
+    conf = client.post(
+        "/medicines/confirm",
+        json={
+            "share_code": "ALRG01",
+            "replace_existing": True,
+            "medicines": [
+                {
+                    "brand_name": "Septran DS",
+                    "generic_name": "Sulfamethoxazole + Trimethoprim",
+                    "strength": "800 mg",
+                    "dosage_form": "tablet",
+                    "dosage_pattern": "1-0-1",
+                    "meal_relation": "after_food",
+                }
+            ],
+        },
+    )
+    assert conf.status_code == 201
+    assert any(f["code"] == "ALLERGY_CONFLICT" for f in conf.json()["regimen_safety_flags"])
+
+
+def test_refills_strip_verifier_and_trends(client: TestClient):
+    from datetime import datetime, timedelta, timezone
+
+    # Refill math unit test
+    four_days_ago = datetime.now(timezone.utc) - timedelta(days=4)
+    elapsed, remaining, status_val, msg_en, _, _ = scheduler.compute_refill_status(
+        brand_name="Opox-CV",
+        created_at=four_days_ago,
+        duration_days=5,
+    )
+    assert elapsed >= 3
+    assert remaining is not None and remaining <= 2
+    assert status_val == "refill_soon"
+    assert "Opox-CV" in msg_en
+
+    # Refills endpoint
+    refills_res = client.get("/profile/DEMO01/refills")
+    assert refills_res.status_code == 200
+    assert len(refills_res.json()["items"]) >= 4
+
+    # Strip verifier on DEMO01 (demo payload's first med is Thyronorm -> matches DEMO01)
+    verify_match = client.post(
+        "/scan/verify-strip",
+        data={"share_code": "DEMO01", "demo": "true"},
+    )
+    assert verify_match.status_code == 200
+    assert verify_match.json()["matched"] is True
+    assert "Thyronorm" in verify_match.json()["spoken_en"]
+
+    # Strip verifier on an empty profile -> matched=False + stop warning
+    client.post(
+        "/profile",
+        json={"share_code": "EMPT01", "elder_name": "Lata Nani", "preferred_language": "mr"},
+    )
+    verify_miss = client.post(
+        "/scan/verify-strip",
+        data={"share_code": "EMPT01", "demo": "true"},
+    )
+    assert verify_miss.status_code == 200
+    assert verify_miss.json()["matched"] is False
+    assert verify_miss.json()["warning"] is not None
+
+    # 7-day trends endpoint
+    trends_res = client.get("/profile/DEMO01/trends?days=7")
+    assert trends_res.status_code == 200
+    trends = trends_res.json()
+    assert len(trends["daily_adherence"]) == 7
+    assert trends["vitals_trend"]["readings_count"] >= 2
+
+

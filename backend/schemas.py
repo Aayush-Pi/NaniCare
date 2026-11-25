@@ -18,6 +18,23 @@ SlotName = Literal["empty_stomach", "morning", "afternoon", "evening", "night", 
 DoseStatus = Literal["taken", "skipped", "snoozed", "missed", "due_now", "upcoming"]
 SeverityLevel = Literal["info", "warning", "critical"]
 VitalStatus = Literal["normal", "caution", "critical"]
+VisualShape = Literal[
+    "round",
+    "oval",
+    "oblong",
+    "capsule_bicolor",
+    "bottle",
+    "dropper",
+    "inhaler",
+    "tube",
+    "vial",
+]
+VisualSource = Literal[
+    "catalog_verified",
+    "ai_inferred",
+    "generic_fallback",
+    "uploaded_strip",
+]
 
 
 # =============================================================================
@@ -73,6 +90,22 @@ class ExtractedMedicineRaw(BaseModel):
     raw_line_text: str | None = Field(
         default=None,
         description="Best-effort raw transcription of the prescription line or strip label.",
+    )
+    pill_shape: VisualShape | None = Field(
+        default=None,
+        description="Optional compact shape hint for vector pill rendering.",
+    )
+    pill_color_hex: str | None = Field(
+        default=None,
+        description="Optional 6-digit hex color of the pill/capsule primary color (e.g. '#FFFFFF').",
+    )
+    pill_secondary_color_hex: str | None = Field(
+        default=None,
+        description="Optional 6-digit hex secondary color for two-tone capsules or labels.",
+    )
+    strip_accent_hex: str | None = Field(
+        default=None,
+        description="Optional 6-digit hex accent color of the medicine blister strip or bottle label.",
     )
 
 
@@ -154,6 +187,7 @@ class EnrichedScannedMedicine(BaseModel):
     instructions_mr: str
     pill_color_tag: str = "#2563EB"
     strip_thumbnail: str | None = None
+    visual_source: VisualSource = "generic_fallback"
     confidence: float = Field(..., ge=0.0, le=1.0)
     needs_review: bool = False
     highlight_color: Literal["none", "yellow", "red"] = "none"
@@ -556,6 +590,7 @@ class DailySummaryResponse(BaseModel):
     latest_vital: VitalResponse | None = None
     abnormal_vital_flags: list[VitalFlag] = Field(default_factory=list)
     active_safety_flags: list[SafetyFlag] = Field(default_factory=list)
+    refill_alerts: list[str] = Field(default_factory=list)
     whatsapp_message: str
     whatsapp_url: str
 
@@ -570,3 +605,130 @@ class TTSRequest(BaseModel):
 
     text: str = Field(..., min_length=1, max_length=2500)
     language: LanguageCode = "en"
+
+
+# =============================================================================
+# 8. Medicine Visual Catalog, Refill Tracker, Strip Verifier & Trends Schemas
+# =============================================================================
+
+
+class VisualSpec(BaseModel):
+    """Compact 5-field parametric spec rendered into lightweight SVG vector graphics."""
+
+    shape: VisualShape = "round"
+    primary_color: str = "#FFFFFF"
+    secondary_color: str | None = None
+    strip_accent: str = "#2563EB"
+    imprint: str | None = None
+
+
+class CatalogLookupRequest(BaseModel):
+    """Request payload for POST /catalog/lookup."""
+
+    query: str = Field(..., min_length=1, max_length=160)
+    dosage_form: DosageForm = "tablet"
+    strength: str | None = Field(default=None, max_length=64)
+    allow_ai: bool = Field(
+        default=True,
+        description="If true and DB misses, run a tiny text-only Gemini lookup and cache the result.",
+    )
+
+
+class CatalogEntryResponse(BaseModel):
+    """Single medicine visual & reference entry from medicine_catalog."""
+
+    id: int | None = None
+    normalized_key: str
+    brand_name: str
+    aliases: list[str] = Field(default_factory=list)
+    generic_name: str | None = None
+    therapeutic_class: str | None = None
+    dosage_form: str = "tablet"
+    visual_spec: VisualSpec
+    strip_thumbnail: str
+    source: str = "seed_catalog"
+
+
+class CatalogLookupResponse(BaseModel):
+    """Response from POST /catalog/lookup with cache/AI source telemetry."""
+
+    found: bool
+    cache_hit: bool
+    visual_source: VisualSource
+    entry: CatalogEntryResponse
+
+
+class RefillItem(BaseModel):
+    """Refill & course-completion forecast for an active medicine."""
+
+    medicine_id: int
+    brand_name: str
+    strength: str | None = None
+    duration_days: int | None = None
+    days_elapsed: int
+    days_remaining: int | None = None
+    status: Literal["ok", "refill_soon", "completed", "ongoing"]
+    message_en: str
+    message_hi: str
+    message_mr: str
+
+
+class RefillsResponse(BaseModel):
+    """Refill dashboard returned by GET /profile/{share_code}/refills."""
+
+    share_code: str
+    elder_name: str
+    as_of_date: date
+    refill_soon_count: int
+    completed_count: int
+    items: list[RefillItem]
+
+
+class StripVerifyResponse(BaseModel):
+    """Result from POST /scan/verify-strip ('Is this the right pill?')."""
+
+    share_code: str
+    matched: bool
+    confidence: float
+    detected_brand: str | None = None
+    detected_strength: str | None = None
+    matched_medicine: MedicineResponse | None = None
+    next_slot_label: str | None = None
+    spoken_en: str
+    spoken_hi: str
+    spoken_mr: str
+    warning: str | None = None
+
+
+class DailyAdherencePoint(BaseModel):
+    """Single day's medication adherence data point."""
+
+    date: date
+    taken: int
+    total: int
+    adherence_percent: float
+
+
+class VitalsTrendSummary(BaseModel):
+    """Multi-day vitals trend snapshot."""
+
+    readings_count: int
+    latest_temperature_f: float | None = None
+    latest_systolic_mmhg: int | None = None
+    latest_diastolic_mmhg: int | None = None
+    latest_weight_kg: float | None = None
+    systolic_trend: Literal["rising", "falling", "stable", "insufficient_data"] = "insufficient_data"
+    temperature_trend: Literal["rising", "falling", "stable", "insufficient_data"] = "insufficient_data"
+    weight_delta_kg: float | None = None
+    critical_events_count: int = 0
+
+
+class TrendsResponse(BaseModel):
+    """7-day adherence & vitals analytics returned by GET /profile/{share_code}/trends."""
+
+    share_code: str
+    elder_name: str
+    days: int
+    average_adherence_percent: float
+    daily_adherence: list[DailyAdherencePoint]
+    vitals_trend: VitalsTrendSummary
