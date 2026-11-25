@@ -10,11 +10,12 @@ import base64
 import io
 import logging
 import os
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import and_, select
@@ -55,6 +56,7 @@ from schemas import (
     SafetyFlag,
     ScanResponse,
     ScheduleSlot,
+    TTSRequest,
     VitalCreateRequest,
     VitalFlag,
     VitalResponse,
@@ -1416,4 +1418,73 @@ def get_daily_summary(
         active_safety_flags=active_safety_flags,
         whatsapp_message=whatsapp_message,
         whatsapp_url=whatsapp_url,
+    )
+
+
+# =============================================================================
+# Neural Text-to-Speech Endpoint (English / Hindi / Marathi)
+# =============================================================================
+
+_TTS_VOICE_MAP: dict[str, str] = {
+    "en": "en-IN-NeerjaNeural",
+    "hi": "hi-IN-SwaraNeural",
+    "mr": "mr-IN-AarohiNeural",
+}
+_TTS_CACHE: OrderedDict[tuple[str, str], bytes] = OrderedDict()
+_TTS_CACHE_MAX_ITEMS = 128
+
+
+async def _synthesize_neural_tts(text: str, language: str) -> tuple[bytes, str]:
+    """Synthesize natural Indian neural speech (MP3) using edge-tts with LRU caching."""
+    voice = _TTS_VOICE_MAP.get(language, _TTS_VOICE_MAP["en"])
+    cache_key = (voice, text)
+    if cache_key in _TTS_CACHE:
+        _TTS_CACHE.move_to_end(cache_key)
+        return _TTS_CACHE[cache_key], voice
+
+    import edge_tts
+
+    communicator = edge_tts.Communicate(text=text, voice=voice, rate="-6%")
+    audio_buf = bytearray()
+    async for chunk in communicator.stream():
+        if chunk.get("type") == "audio" and chunk.get("data"):
+            audio_buf.extend(chunk["data"])
+
+    audio_bytes = bytes(audio_buf)
+    if not audio_bytes:
+        raise RuntimeError(f"Empty audio stream from {voice}")
+
+    _TTS_CACHE[cache_key] = audio_bytes
+    if len(_TTS_CACHE) > _TTS_CACHE_MAX_ITEMS:
+        _TTS_CACHE.popitem(last=False)
+
+    return audio_bytes, voice
+
+
+@app.post("/tts", tags=["Nani Mode"])
+async def synthesize_speech(payload: TTSRequest) -> Response:
+    """Return natural Indian neural MP3 audio for English, Hindi, or Marathi text."""
+    cleaned_text = " ".join(payload.text.split())
+    if not cleaned_text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Text for speech synthesis cannot be empty.",
+        )
+
+    try:
+        audio_bytes, voice = await _synthesize_neural_tts(cleaned_text, payload.language)
+    except Exception as exc:
+        logger.warning("Neural TTS synthesis failed (%s): %s", payload.language, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Neural TTS temporarily unavailable; use browser speech fallback.",
+        ) from exc
+
+    return Response(
+        content=audio_bytes,
+        media_type="audio/mpeg",
+        headers={
+            "X-TTS-Voice": voice,
+            "Cache-Control": "public, max-age=3600",
+        },
     )
