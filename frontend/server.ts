@@ -15,14 +15,7 @@ function getGeminiClient(): GoogleGenAI {
   if (!apiKey) {
     throw new Error("GEMINI_API_KEY is not configured on the server.");
   }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
-  });
+  return new GoogleGenAI({ apiKey });
 }
 
 const SCAN_RESPONSE_SCHEMA = {
@@ -166,7 +159,7 @@ CRITICAL SAFETY RULES:
 7. If the image is a standalone medicine strip without dosage schedule printed, extract the medicine name and strength accurately, set frequency_code to "1-0-0", set ai_accuracy to "Medium", and state in ai_accuracy_reason that schedule timing is not printed on the strip and must be verified by the caregiver.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-4-hydrogen",
+        model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
         contents: {
           parts: [
             {
@@ -203,7 +196,7 @@ CRITICAL SAFETY RULES:
       if (lower.includes("api_key") || lower.includes("permission_denied") || lower.includes("403")) {
         res.status(403).json({
           error:
-            "Gemini API key is missing or invalid. Please check your key in Settings > Secrets.",
+            "Gemini API key is missing or invalid. Please check GEMINI_API_KEY in frontend/.env.",
         });
         return;
       }

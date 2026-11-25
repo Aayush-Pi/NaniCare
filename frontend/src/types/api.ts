@@ -7,8 +7,19 @@ export type MealRelation = "Before Food" | "After Food" | "With Food" | "Anytime
 
 export interface ScheduledSlot {
   slot: TimeSlotKey;
+  backend_slot?: string;
   time_label: string;
   dose_count: number;
+}
+
+export interface SafetyFlagSummary {
+  code: string;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  message_en: string;
+  message_hi?: string;
+  message_mr?: string;
+  affected_medicines: string[];
 }
 
 /**
@@ -31,6 +42,7 @@ export interface ScannedMedicineCandidate {
   simple_explanation_mr: string;
   strip_image_url: string;
   manually_verified: boolean;
+  highlight_color?: "none" | "yellow" | "red";
 }
 
 export interface ScanPrescriptionResponse {
@@ -38,6 +50,7 @@ export interface ScanPrescriptionResponse {
   doctor_or_clinic: string;
   general_warning: string;
   medicines: ScannedMedicineCandidate[];
+  regimen_safety_flags?: SafetyFlagSummary[];
 }
 
 /**
@@ -97,6 +110,7 @@ export interface MarkDoseRequest {
   share_code: string;
   medicine_id: string;
   slot: TimeSlotKey;
+  backend_slot?: string;
   taken: boolean;
 }
 
@@ -118,6 +132,9 @@ export interface VitalLogEntry {
   bp_systolic: number;
   bp_diastolic: number;
   weight_kg: number;
+  pulse_bpm?: number;
+  spo2_percent?: number;
+  blood_sugar_mgdl?: number;
   notes?: string;
   flagged?: boolean;
   flag_reason?: string;
@@ -129,6 +146,9 @@ export interface CreateVitalRequest {
   bp_systolic: number;
   bp_diastolic: number;
   weight_kg: number;
+  pulse_bpm?: number;
+  spo2_percent?: number;
+  blood_sugar_mgdl?: number;
   notes?: string;
 }
 

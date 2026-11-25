@@ -32,6 +32,7 @@ import {
   EmergencyContact,
   LanguageCode,
   ProfileInfo,
+  SafetyFlagSummary,
   ScannedMedicineCandidate,
   TimeSlotKey,
   VerifiedMedicine,
@@ -91,6 +92,7 @@ export function CaregiverPage({
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState("");
   const [drafts, setDrafts] = useState<ScannedMedicineCandidate[]>([]);
+  const [regimenSafetyFlags, setRegimenSafetyFlags] = useState<SafetyFlagSummary[]>([]);
   const [isConfirming, setIsConfirming] = useState(false);
   const [saveMode, setSaveMode] = useState<"replace" | "append">("replace");
   const [isFlushing, setIsFlushing] = useState(false);
@@ -146,6 +148,7 @@ export function CaregiverPage({
       setDoctorOrClinic(result.doctor_or_clinic || "");
       setGeneralWarning(result.general_warning || "");
       setDrafts(result.medicines);
+      setRegimenSafetyFlags(result.regimen_safety_flags || []);
 
       if (result.medicines.length === 0) {
         setScanError(
@@ -605,6 +608,29 @@ export function CaregiverPage({
               </div>
 
               <div className="space-y-5">
+                {regimenSafetyFlags.length > 0 && (
+                  <div
+                    role="alert"
+                    className="rounded-2xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 p-4 space-y-2"
+                  >
+                    <p className="text-xs font-bold uppercase tracking-wide text-red-800 dark:text-red-300">
+                      Regimen Safety &amp; Interaction Warnings
+                    </p>
+                    <ul className="space-y-1.5 text-sm text-red-900 dark:text-red-200">
+                      {regimenSafetyFlags.map((flag, fIdx) => (
+                        <li key={`${flag.code}-${fIdx}`}>
+                          <span className="font-bold">{flag.title}:</span> {flag.message_en}
+                          {flag.affected_medicines?.length > 0 && (
+                            <span className="ml-1 text-xs font-mono-data opacity-80">
+                              ({flag.affected_medicines.join(", ")})
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
                 {drafts.map((draft, idx) => (
                   <ReviewMedicineCard
                     key={draft.id}

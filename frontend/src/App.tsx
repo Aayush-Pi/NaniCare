@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { ModeSelect } from "./components/ModeSelect";
 import { TopBar } from "./components/TopBar";
-import { fetchProfileSummary, fetchSchedule, markDose } from "./lib/api";
+import {
+  checkBackendHealth,
+  fetchProfileSummary,
+  fetchSchedule,
+  markDose,
+  saveProfileContact,
+} from "./lib/api";
 import { CaregiverPage } from "./pages/caregiver";
 import { NaniPage } from "./pages/nani";
 import { VitalsPage } from "./pages/vitals";
@@ -42,6 +48,14 @@ export default function App() {
   const [emergencyContact, setEmergencyContact] = useState<EmergencyContact>(() =>
     loadEmergencyContact()
   );
+  const [backendBadge, setBackendBadge] = useState<{
+    connected: boolean;
+    label: string;
+  } | null>(null);
+
+  useEffect(() => {
+    void checkBackendHealth().then(setBackendBadge);
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -99,10 +113,13 @@ export default function App() {
     slot: TimeSlotKey,
     taken: boolean
   ) {
+    const matchedMed = verifiedMedicines.find((m) => m.id === medicineId);
+    const matchedSlot = matchedMed?.slots.find((s) => s.slot === slot);
     await markDose({
       share_code: shareCode,
       medicine_id: medicineId,
       slot,
+      backend_slot: matchedSlot?.backend_slot,
       taken,
     });
     await refreshProfileData();
@@ -111,6 +128,7 @@ export default function App() {
   function handleUpdateEmergencyContact(contact: EmergencyContact) {
     setEmergencyContact(contact);
     saveEmergencyContact(contact);
+    void saveProfileContact(shareCode, contact);
   }
 
   return (
@@ -120,6 +138,7 @@ export default function App() {
         onNavigate={handleNavigate}
         theme={theme}
         onToggleTheme={handleToggleTheme}
+        backendBadge={backendBadge}
       />
 
       <div className="flex-1">
