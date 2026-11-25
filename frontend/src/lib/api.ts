@@ -17,6 +17,7 @@ import {
   MealRelation,
   ProfileInfo,
   ProfileSummaryResponse,
+  SafetyFlagSummary,
   ScannedMedicineCandidate,
   ScanPrescriptionResponse,
   ScheduledSlot,
@@ -148,6 +149,10 @@ function mapBackendVital(
     bp_systolic: Number(raw.systolic_mmhg ?? raw.bp_systolic ?? 0),
     bp_diastolic: Number(raw.diastolic_mmhg ?? raw.bp_diastolic ?? 0),
     weight_kg: Number(raw.weight_kg ?? 0),
+    pulse_bpm: typeof raw.pulse_bpm === "number" ? raw.pulse_bpm : undefined,
+    spo2_percent: typeof raw.spo2_percent === "number" ? raw.spo2_percent : undefined,
+    blood_sugar_mgdl:
+      typeof raw.blood_sugar_mgdl === "number" ? raw.blood_sugar_mgdl : undefined,
     notes: raw.notes ? String(raw.notes) : undefined,
     flagged:
       typeof raw.flagged === "boolean"
@@ -263,6 +268,12 @@ function mapRawScannedMedicine(
     ),
     strip_image_url: stripImage,
     manually_verified: false,
+    highlight_color:
+      raw.highlight_color === "red" || raw.highlight_color === "yellow"
+        ? raw.highlight_color
+        : needsReview
+        ? "yellow"
+        : "none",
   };
 }
 
@@ -315,6 +326,10 @@ export async function scanPrescription(params: {
       .filter((v) => typeof v === "string" && v.trim().length > 0)
       .join(" — ");
 
+    const regimenFlags: SafetyFlagSummary[] = Array.isArray(payload.regimen_safety_flags)
+      ? (payload.regimen_safety_flags as SafetyFlagSummary[])
+      : [];
+
     return {
       document_type: String(payload.document_type ?? payload.source_type ?? "Prescription"),
       doctor_or_clinic: String(payload.doctor_or_clinic ?? doctorOrClinic),
@@ -322,6 +337,7 @@ export async function scanPrescription(params: {
       medicines: rawMeds.map((m, idx) =>
         mapRawScannedMedicine(m, idx, params.overrideStripPhoto)
       ),
+      regimen_safety_flags: regimenFlags,
     };
   }
 
@@ -445,6 +461,7 @@ export async function confirmMedicines(
               const slotKey = toFrontendSlot(s.slot);
               return {
                 slot: slotKey,
+                backend_slot: String(s.slot ?? slotKey.toLowerCase()),
                 time_label: String(s.time ?? SLOT_TIME_LABELS[slotKey]),
                 dose_count: Number(s.dose_qty ?? 1),
               };
@@ -590,6 +607,7 @@ export async function fetchSchedule(shareCode: string): Promise<ScheduleResponse
       const slotKey = toFrontendSlot(card.scheduled_slot);
       const slotEntry: ScheduledSlot = {
         slot: slotKey,
+        backend_slot: String(card.scheduled_slot ?? slotKey.toLowerCase()),
         time_label: String(card.scheduled_time ?? SLOT_TIME_LABELS[slotKey]),
         dose_count: Number(card.dose_qty ?? 1),
       };
@@ -665,7 +683,7 @@ export async function markDose(req: MarkDoseRequest): Promise<MarkDoseResponse> 
       body: JSON.stringify({
         share_code: req.share_code.trim().toUpperCase(),
         medicine_id: Number.isFinite(parsedId) ? parsedId : req.medicine_id,
-        scheduled_slot: req.slot.toLowerCase(),
+        scheduled_slot: (req.backend_slot || req.slot).toLowerCase(),
         status: req.taken ? "taken" : "skipped",
         marked_by: "nani",
       }),
@@ -872,6 +890,9 @@ export async function logVital(req: CreateVitalRequest): Promise<VitalLogEntry> 
         systolic_mmhg: req.bp_systolic,
         diastolic_mmhg: req.bp_diastolic,
         weight_kg: req.weight_kg,
+        pulse_bpm: req.pulse_bpm,
+        spo2_percent: req.spo2_percent,
+        blood_sugar_mgdl: req.blood_sugar_mgdl,
         notes: req.notes?.trim() || undefined,
       }),
     });
@@ -899,6 +920,9 @@ export async function logVital(req: CreateVitalRequest): Promise<VitalLogEntry> 
     bp_systolic: req.bp_systolic,
     bp_diastolic: req.bp_diastolic,
     weight_kg: req.weight_kg,
+    pulse_bpm: req.pulse_bpm,
+    spo2_percent: req.spo2_percent,
+    blood_sugar_mgdl: req.blood_sugar_mgdl,
     notes: req.notes?.trim() || undefined,
     flagged: highTemp || highBp,
     flag_reason: highTemp
@@ -914,8 +938,85 @@ export async function logVital(req: CreateVitalRequest): Promise<VitalLogEntry> 
 }
 
 export async function deleteVitalEntry(vitalId: string): Promise<void> {
+  if (FASTAPI_BASE_URL) {
+    const response = await fetch(
+      `${FASTAPI_BASE_URL}/vitals/${encodeURIComponent(vitalId)}`,
+      { method: "DELETE" }
+    );
+    if (!response.ok && response.status !== 404) {
+      throw new Error("Could not delete vital entry on backend.");
+    }
+  }
   const remaining = loadAllStoredVitals().filter((v) => v.id !== vitalId);
   saveAllStoredVitals(remaining);
+}
+
+/**
+ * GET /health
+ */
+export async function checkBackendHealth(): Promise<{
+  connected: boolean;
+  label: string;
+}> {
+  if (!FASTAPI_BASE_URL) {
+    return {
+      connected: false,
+      label: USE_MOCK_DATA ? "Offline Mock" : "Preview Mode",
+    };
+  }
+  try {
+    const res = await fetch(`${FASTAPI_BASE_URL}/health`);
+    if (!res.ok) return { connected: false, label: "FastAPI Offline" };
+    const data = (await res.json()) as { database_backend?: string };
+    const dbName = data.database_backend === "postgresql" ? "Neon" : "SQLite";
+    return { connected: true, label: `FastAPI · ${dbName}` };
+  } catch {
+    return { connected: false, label: "FastAPI Offline" };
+  }
+}
+
+/**
+ * POST /profile
+ * Persists caregiver emergency contact details onto the elder profile in FastAPI.
+ */
+export async function saveProfileContact(
+  shareCode: string,
+  contact: EmergencyContact
+): Promise<void> {
+  if (!FASTAPI_BASE_URL) return;
+  const normalizedCode = shareCode.trim().toUpperCase();
+  let elderName = "Nani";
+  let preferredLang: LanguageCode = "hi";
+  try {
+    const existingRes = await fetch(
+      `${FASTAPI_BASE_URL}/profile/${encodeURIComponent(normalizedCode)}`
+    );
+    if (existingRes.ok) {
+      const existing = (await existingRes.json()) as Record<string, unknown>;
+      if (existing.elder_name) elderName = String(existing.elder_name);
+      if (
+        existing.preferred_language === "en" ||
+        existing.preferred_language === "hi" ||
+        existing.preferred_language === "mr"
+      ) {
+        preferredLang = existing.preferred_language;
+      }
+    }
+  } catch {
+    // Use safe defaults if profile doesn't exist yet
+  }
+
+  await fetch(`${FASTAPI_BASE_URL}/profile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      share_code: normalizedCode,
+      elder_name: elderName,
+      preferred_language: preferredLang,
+      caregiver_name: contact.name,
+      caregiver_phone: contact.phone,
+    }),
+  }).catch(() => undefined);
 }
 
 /**

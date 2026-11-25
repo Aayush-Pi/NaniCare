@@ -44,6 +44,10 @@ export function VitalsLogger({
   const [bpSystolic, setBpSystolic] = useState("122");
   const [bpDiastolic, setBpDiastolic] = useState("78");
   const [weightKg, setWeightKg] = useState("61.5");
+  const [showMoreVitals, setShowMoreVitals] = useState(false);
+  const [pulseBpm, setPulseBpm] = useState("");
+  const [spo2Percent, setSpo2Percent] = useState("");
+  const [bloodSugarMgdl, setBloodSugarMgdl] = useState("");
   const [notes, setNotes] = useState("");
 
   async function handleSubmit(event: FormEvent) {
@@ -55,14 +59,26 @@ export function VitalsLogger({
 
     if ([temp, sys, dia, wt].some((n) => Number.isNaN(n))) return;
 
+    const pulse = pulseBpm.trim() ? Number.parseInt(pulseBpm, 10) : undefined;
+    const spo2 = spo2Percent.trim() ? Number.parseInt(spo2Percent, 10) : undefined;
+    const sugar = bloodSugarMgdl.trim()
+      ? Number.parseFloat(bloodSugarMgdl)
+      : undefined;
+
     await onLogVital({
       share_code: shareCode,
       temperature_f: temp,
       bp_systolic: sys,
       bp_diastolic: dia,
       weight_kg: wt,
+      pulse_bpm: pulse && !Number.isNaN(pulse) ? pulse : undefined,
+      spo2_percent: spo2 && !Number.isNaN(spo2) ? spo2 : undefined,
+      blood_sugar_mgdl: sugar && !Number.isNaN(sugar) ? sugar : undefined,
       notes: notes.trim() || undefined,
     });
+    setPulseBpm("");
+    setSpo2Percent("");
+    setBloodSugarMgdl("");
     setNotes("");
   }
 
@@ -153,6 +169,68 @@ export function VitalsLogger({
             />
             <p className="text-xs text-slate-500 dark:text-slate-400">Daily baseline</p>
           </label>
+        </div>
+
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={() => setShowMoreVitals((prev) => !prev)}
+            className="text-xs font-semibold text-teal-700 dark:text-teal-400 hover:underline cursor-pointer"
+          >
+            {showMoreVitals
+              ? "Hide optional vitals (Pulse, SpO2, Sugar)"
+              : "+ Add optional vitals (Pulse, SpO2, Blood Sugar)"}
+          </button>
+
+          {showMoreVitals && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Pulse (bpm)
+                </span>
+                <input
+                  type="number"
+                  min="25"
+                  max="220"
+                  placeholder="e.g. 76"
+                  value={pulseBpm}
+                  onChange={(e) => setPulseBpm(e.target.value)}
+                  className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-data"
+                />
+              </label>
+
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  SpO2 (%)
+                </span>
+                <input
+                  type="number"
+                  min="50"
+                  max="100"
+                  placeholder="e.g. 98"
+                  value={spo2Percent}
+                  onChange={(e) => setSpo2Percent(e.target.value)}
+                  className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-data"
+                />
+              </label>
+
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Blood Sugar (mg/dL)
+                </span>
+                <input
+                  type="number"
+                  step="1"
+                  min="20"
+                  max="700"
+                  placeholder="e.g. 120"
+                  value={bloodSugarMgdl}
+                  onChange={(e) => setBloodSugarMgdl(e.target.value)}
+                  className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-data"
+                />
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
@@ -248,7 +326,14 @@ export function VitalsLogger({
                         )}
                       </td>
                       <td className="py-3.5 px-4 text-slate-600 dark:text-slate-400 max-w-xs truncate">
-                        {entry.notes || "—"}
+                        {[
+                          entry.pulse_bpm ? `Pulse ${entry.pulse_bpm}` : "",
+                          entry.spo2_percent ? `SpO2 ${entry.spo2_percent}%` : "",
+                          entry.blood_sugar_mgdl ? `Sugar ${entry.blood_sugar_mgdl}` : "",
+                          entry.notes || "",
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") || "—"}
                       </td>
                       <td className="py-3.5 px-4 text-right">
                         <button

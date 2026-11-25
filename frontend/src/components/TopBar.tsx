@@ -6,9 +6,16 @@ interface TopBarProps {
   onNavigate: (route: AppRoute) => void;
   theme: ThemeMode;
   onToggleTheme: () => void;
+  backendBadge?: { connected: boolean; label: string } | null;
 }
 
-export function TopBar({ route, onNavigate, theme, onToggleTheme }: TopBarProps) {
+export function TopBar({
+  route,
+  onNavigate,
+  theme,
+  onToggleTheme,
+  backendBadge,
+}: TopBarProps) {
   const navItems: Array<{ key: AppRoute; label: string }> = [
     { key: "select", label: "Choose Mode" },
     { key: "nani", label: "Grandparents Mode" },
@@ -52,8 +59,25 @@ export function TopBar({ route, onNavigate, theme, onToggleTheme }: TopBarProps)
           })}
         </nav>
 
-        {/* Zone 3: Single primary theme switch */}
-        <div className="flex items-center shrink-0">
+        {/* Zone 3: Status badge + theme switch */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          {backendBadge && (
+            <span
+              className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border whitespace-nowrap ${
+                backendBadge.connected
+                  ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300"
+                  : "border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300"
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  backendBadge.connected ? "bg-emerald-500" : "bg-slate-400"
+                }`}
+                aria-hidden="true"
+              />
+              <span>{backendBadge.label}</span>
+            </span>
+          )}
           <button
             type="button"
             onClick={onToggleTheme}
