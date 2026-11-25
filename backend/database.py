@@ -164,6 +164,6 @@ def check_db_connection() -> tuple[bool, str]:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True, "sqlite" if IS_SQLITE else "postgresql"
-    except Exception as exc:  # pragma: no cover - defensive runtime check
+    except Exception:  # pragma: no cover - defensive runtime check
         logger.exception("Database health probe failed")
-        return False, str(exc)
+        return False, "unavailable"

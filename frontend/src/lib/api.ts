@@ -41,9 +41,9 @@ import {
 } from "../utils/storage";
 import { buildSummaryText, buildWhatsAppSummaryUrl } from "../utils/whatsapp";
 
-const FASTAPI_BASE_URL = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
+const FASTAPI_BASE_URL = (import.meta.env?.VITE_API_URL || "").trim().replace(/\/+$/, "");
 const USE_MOCK_DATA =
-  String(import.meta.env.VITE_USE_MOCK_DATA || "").trim().toLowerCase() === "true";
+  String(import.meta.env?.VITE_USE_MOCK_DATA || "").trim().toLowerCase() === "true";
 
 export function getApiMode(): { connectedToFastApi: boolean; baseUrl: string } {
   if (FASTAPI_BASE_URL) {
@@ -969,13 +969,24 @@ export async function checkBackendHealth(): Promise<{
   }
   try {
     const res = await fetch(`${FASTAPI_BASE_URL}/health`);
-    if (!res.ok) return { connected: false, label: "FastAPI Offline" };
-    const data = (await res.json()) as { database_backend?: string };
-    const dbName = data.database_backend === "postgresql" ? "Neon" : "SQLite";
-    return { connected: true, label: `FastAPI · ${dbName}` };
+    if (res.ok) {
+      const data = (await res.json()) as { database_backend?: string };
+      const dbName = data.database_backend === "postgresql" ? "Neon" : "SQLite";
+      return { connected: true, label: `FastAPI · ${dbName}` };
+    }
   } catch {
-    return { connected: false, label: "FastAPI Offline" };
+    // Some privacy extensions block /health on third-party origins; verify via root endpoint
   }
+
+  try {
+    const fallbackRes = await fetch(`${FASTAPI_BASE_URL}/`);
+    if (fallbackRes.ok) {
+      return { connected: true, label: "FastAPI Connected" };
+    }
+  } catch {
+    // Backend genuinely unreachable
+  }
+  return { connected: false, label: "FastAPI Offline" };
 }
 
 /**

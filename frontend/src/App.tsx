@@ -69,8 +69,19 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    document.documentElement.lang = language;
     saveLanguage(language);
   }, [language]);
+
+  useEffect(() => {
+    const titles: Record<AppRoute, string> = {
+      select: "NaniCare — Home & Family Profile",
+      nani: "NaniCare — Grandparents Mode",
+      caregiver: "NaniCare — Caregiver Mode",
+      vitals: "NaniCare — Vitals, Trends & Refills",
+    };
+    document.title = titles[route];
+  }, [route]);
 
   useEffect(() => {
     saveShareCode(shareCode);
@@ -164,8 +175,6 @@ export default function App() {
             onChangeShareCode={setShareCode}
             onChangeLanguage={setLanguage}
             onSelectRoute={handleNavigate}
-            theme={theme}
-            onSetTheme={setTheme}
             verifiedMedicines={verifiedMedicines}
             vitals={vitals}
           />

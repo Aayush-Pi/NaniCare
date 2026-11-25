@@ -600,3 +600,70 @@ def test_elder_friendly_visual_tts_includes_size_color_and_shape(client: TestCli
     assert "नारिंगी आणि पांढऱ्या" in pan_med["instructions_mr"]
 
 
+
+
+def test_security_headers_present_on_responses(client: TestClient):
+    res = client.get("/health")
+    assert res.status_code == 200
+    assert res.headers.get("x-content-type-options") == "nosniff"
+    assert res.headers.get("x-frame-options") == "DENY"
+    assert res.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+    assert "camera=(self)" in (res.headers.get("permissions-policy") or "")
+
+
+def test_invalid_image_upload_rejected_cleanly(client: TestClient):
+    res = client.post(
+        "/scan",
+        files={"file": ("evil.jpg", b"not-a-real-image-payload", "image/jpeg")},
+    )
+    assert res.status_code == 400
+    detail = res.json()["detail"]
+    assert "valid image" in detail.lower()
+    assert "traceback" not in detail.lower()
+
+
+def test_rate_limiting_returns_429_with_retry_after(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    import engine as engine_module
+
+    engine_module._RATE_LIMIT_BUCKETS.clear()
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
+    try:
+        r1 = client.post("/scan", data={"demo": "true"})
+        r2 = client.post("/scan", data={"demo": "true"})
+        r3 = client.post("/scan", data={"demo": "true"})
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        assert r3.status_code == 429
+        assert int(r3.headers.get("retry-after", "0")) >= 1
+    finally:
+        engine_module._RATE_LIMIT_BUCKETS.clear()
+
+
+def test_tts_rejects_empty_text(client: TestClient):
+    res = client.post("/tts", json={"text": "   ", "language": "en"})
+    assert res.status_code in (400, 422)
+
+
+def test_health_hides_raw_db_exception_details(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    import database as db_module
+
+    def _boom():
+        raise RuntimeError("postgresql://secret_user:secret_pass@host/db failed")
+
+    monkeypatch.setattr(db_module.engine, "connect", _boom)
+    ok, backend_label = db_module.check_db_connection()
+    assert ok is False
+    assert backend_label == "unavailable"
+    assert "secret_pass" not in backend_label
+
+
+def test_gender_neutral_spoken_instructions_no_hardcoded_nani(client: TestClient):
+    for lang, forbidden in (("en", "Nani,"), ("hi", "नानी जी"), ("mr", "आजी")):
+        sched = client.get(f"/schedule/DEMO01?lang={lang}").json()
+        assert len(sched["cards"]) >= 4
+        for card in sched["cards"]:
+            assert forbidden not in card["spoken_text"]

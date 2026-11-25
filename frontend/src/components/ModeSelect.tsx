@@ -12,7 +12,6 @@ import { createProfile } from "../lib/api";
 import {
   AppRoute,
   LanguageCode,
-  ThemeMode,
   VerifiedMedicine,
   VitalLogEntry,
 } from "../types/api";
@@ -23,8 +22,6 @@ interface ModeSelectProps {
   onChangeShareCode: (code: string) => void;
   onChangeLanguage: (lang: LanguageCode) => void;
   onSelectRoute: (route: AppRoute) => void;
-  theme: ThemeMode;
-  onSetTheme: (theme: ThemeMode) => void;
   verifiedMedicines: VerifiedMedicine[];
   vitals: VitalLogEntry[];
 }

@@ -11,12 +11,14 @@ import base64
 import io
 import logging
 import os
-from collections import OrderedDict
+import time
+from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import and_, select
@@ -150,9 +152,10 @@ def _create_thumbnail_data_uri(image_bytes: bytes) -> tuple[str, str]:
             encoded = base64.b64encode(buf.getvalue()).decode("ascii")
             return f"data:image/jpeg;base64,{encoded}", mime_type
     except (UnidentifiedImageError, OSError) as exc:
+        logger.warning("Rejected invalid image upload: %s", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Uploaded file is not a valid image: {exc}",
+            detail="Uploaded file is not a valid image (JPEG, PNG, or WEBP required).",
         ) from exc
 
 
@@ -1009,9 +1012,60 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=False if allowed_origins == ["*"] else True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept"],
 )
+
+_RATE_LIMITED_PATHS: frozenset[str] = frozenset(
+    {"/scan", "/scan/verify-strip", "/tts", "/catalog/lookup"}
+)
+_RATE_LIMIT_WINDOW_SECONDS = 60.0
+_RATE_LIMIT_BUCKETS: dict[str, deque[float]] = {}
+
+
+def _get_rate_limit_per_minute() -> int:
+    raw = os.getenv("RATE_LIMIT_PER_MINUTE", "60").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 60
+
+
+@app.middleware("http")
+async def security_and_rate_limit_middleware(request: Request, call_next: Any) -> Response:
+    """Apply baseline HTTP security headers and sliding-window rate limits on AI/TTS routes."""
+    if request.method == "POST" and request.url.path in _RATE_LIMITED_PATHS:
+        client_ip = (
+            (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+            or (request.client.host if request.client else "unknown")
+        )
+        bucket_key = f"{client_ip}:{request.url.path}"
+        now = time.monotonic()
+        limit = _get_rate_limit_per_minute()
+        timestamps = _RATE_LIMIT_BUCKETS.setdefault(bucket_key, deque())
+        while timestamps and (now - timestamps[0]) > _RATE_LIMIT_WINDOW_SECONDS:
+            timestamps.popleft()
+        if len(timestamps) >= limit:
+            retry_after = max(1, int(_RATE_LIMIT_WINDOW_SECONDS - (now - timestamps[0])))
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"detail": "Rate limit exceeded. Please wait a moment and try again."},
+                headers={
+                    "Retry-After": str(retry_after),
+                    "X-Content-Type-Options": "nosniff",
+                    "X-Frame-Options": "DENY",
+                },
+            )
+        timestamps.append(now)
+
+    response: Response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Permissions-Policy", "camera=(self), microphone=(self), geolocation=()"
+    )
+    return response
 
 
 # =============================================================================

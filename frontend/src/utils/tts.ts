@@ -1,7 +1,7 @@
 import { LANGUAGES } from "../config";
 import { LanguageCode, TimeSlotKey, VerifiedMedicine } from "../types/api";
 
-const FASTAPI_BASE_URL = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
+const FASTAPI_BASE_URL = (import.meta.env?.VITE_API_URL || "").trim().replace(/\/+$/, "");
 
 const AUDIO_CACHE_MAX = 64;
 const TTS_FETCH_TIMEOUT_MS = 2800;

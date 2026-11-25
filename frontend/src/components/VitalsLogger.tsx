@@ -363,15 +363,16 @@ export function VitalsLogger({
         {/* Desktop Table View */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left border-collapse">
+            <caption className="sr-only">Recorded vitals readings history</caption>
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
-                <th className="py-3 px-5">Recorded</th>
-                <th className="py-3 px-4 text-right">Temp (°F)</th>
-                <th className="py-3 px-4 text-right">Blood Pressure</th>
-                <th className="py-3 px-4 text-right">Weight (kg)</th>
-                <th className="py-3 px-4">Assessment</th>
-                <th className="py-3 px-4">Notes</th>
-                <th className="py-3 px-4 text-right">Action</th>
+                <th scope="col" className="py-3 px-5">Recorded</th>
+                <th scope="col" className="py-3 px-4 text-right">Temp (°F)</th>
+                <th scope="col" className="py-3 px-4 text-right">Blood Pressure</th>
+                <th scope="col" className="py-3 px-4 text-right">Weight (kg)</th>
+                <th scope="col" className="py-3 px-4">Assessment</th>
+                <th scope="col" className="py-3 px-4">Notes</th>
+                <th scope="col" className="py-3 px-4 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-sm">

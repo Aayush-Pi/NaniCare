@@ -115,7 +115,15 @@ const SCAN_RESPONSE_SCHEMA = {
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: "20mb" }));
+  app.disable("x-powered-by");
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(self), microphone=(self), geolocation=()");
+    next();
+  });
+  app.use(express.json({ limit: "12mb" }));
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
@@ -209,7 +217,7 @@ CRITICAL SAFETY RULES:
       }
 
       res.status(500).json({
-        error: `Could not analyze prescription image: ${message}`,
+        error: "Could not analyze prescription image. Please try a clearer photo or retry shortly.",
       });
     }
   });
