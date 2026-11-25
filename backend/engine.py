@@ -1345,7 +1345,7 @@ def confirm_medicines(
     if profile is None:
         profile = Profile(
             share_code=payload.share_code,
-            elder_name=payload.elder_name or "Nani",
+            elder_name=payload.elder_name or "Family Member",
             preferred_language=payload.preferred_language or "hi",
             caregiver_name=payload.caregiver_name,
             caregiver_phone=payload.caregiver_phone,
@@ -2255,9 +2255,9 @@ async def verify_medicine_strip(
             share_code=profile.share_code,
             matched=False,
             confidence=0.0,
-            spoken_en="Sorry Nani, I could not read the medicine name clearly. Please ask your caregiver.",
-            spoken_hi="माफ़ कीजिए नानी जी, दवाई का नाम साफ़ नहीं दिखा। कृपया देखभालकर्ता से पूछें।",
-            spoken_mr="माफ करा आजी, औषधाचे नाव स्पष्ट दिसले नाही. कृपया काळजीवाहकाला विचारा.",
+            spoken_en="Sorry, I could not read the medicine name clearly. Please ask your caregiver.",
+            spoken_hi="माफ़ कीजिए, दवाई का नाम साफ़ नहीं दिखा। कृपया अपने देखभालकर्ता से पूछें।",
+            spoken_mr="माफ करा, औषधाचे नाव स्पष्ट दिसले नाही. कृपया तुमच्या काळजीवाहकाला विचारा.",
             warning="No readable medicine detected in the uploaded image.",
         )
 
@@ -2305,15 +2305,15 @@ async def verify_medicine_strip(
             matched_medicine=_serialize_medicine(best_match),
             next_slot_label=slot_en,
             spoken_en=(
-                f"Yes {profile.elder_name}, this is the {v_desc['en']} of {best_match.brand_name} "
+                f"Yes, this is your {v_desc['en']} of {best_match.brand_name} "
                 f"{best_match.strength or ''}. Scheduled for: {slot_en}."
             ).replace("  ", " "),
             spoken_hi=(
-                f"हाँ {profile.elder_name}, यह {best_match.brand_name} की {v_desc['hi']} है। "
+                f"हाँ, यह आपकी {best_match.brand_name} की {v_desc['hi']} है। "
                 f"इसे {slot_hi} लेना है।"
             ),
             spoken_mr=(
-                f"होय {profile.elder_name}, ही {best_match.brand_name} ची {v_desc['mr']} आहे. "
+                f"होय, ही तुमची {best_match.brand_name} ची {v_desc['mr']} आहे. "
                 f"हे {slot_mr} घ्यायचे आहे."
             ),
         )
@@ -2325,16 +2325,16 @@ async def verify_medicine_strip(
         detected_brand=detected.brand_name,
         detected_strength=detected.strength,
         spoken_en=(
-            f"Stop {profile.elder_name}! {detected.brand_name} is NOT in your active verified schedule. "
+            f"Stop! {detected.brand_name} is NOT in your active verified schedule. "
             "Please check with your caregiver before taking it."
         ),
         spoken_hi=(
-            f"रुकिए {profile.elder_name}! {detected.brand_name} आपकी आज की सत्यापित सूची में नहीं है। "
-            "इसे लेने से पहले देखभालकर्ता से ज़रूर पूछें।"
+            f"रुकिए! {detected.brand_name} आपकी आज की सत्यापित सूची में नहीं है। "
+            "इसे लेने से पहले अपने देखभालकर्ता से ज़रूर पूछें।"
         ),
         spoken_mr=(
-            f"थांबा {profile.elder_name}! {detected.brand_name} तुमच्या आजच्या प्रमाणित यादीत नाही. "
-            "घेण्यापूर्वी कृपया काळजीवाहकाला विचारा."
+            f"थांबा! {detected.brand_name} तुमच्या आजच्या प्रमाणित यादीत नाही. "
+            "घेण्यापूर्वी कृपया तुमच्या काळजीवाहकाला विचारा."
         ),
         warning=f"'{detected.brand_name}' is not in {profile.share_code}'s active verified medicines.",
     )

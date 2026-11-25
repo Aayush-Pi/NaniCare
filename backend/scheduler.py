@@ -521,15 +521,15 @@ def build_multilingual_instructions(
     if as_needed:
         note_en = f" ({frequency_notes})" if frequency_notes else ""
         en = (
-            f"Nani, take {_format_qty(qty)} {item_en} of {med_label} "
-            f"only when needed{note_en}, {meal['en']}."
+            f"Take {_format_qty(qty)} {item_en} of {med_label} "
+            f"only when you need it{note_en}, {meal['en']}."
         )
         hi = (
-            f"नानी जी, {med_label} की {_format_qty_hi(qty)} {item_hi} "
+            f"कृपया {med_label} की {_format_qty_hi(qty)} {item_hi} "
             f"केवल ज़रूरत पड़ने पर {meal['hi']} लीजिए।"
         )
         mr = (
-            f"आजी, {med_label} ची {_format_qty_mr(qty)} {item_mr} "
+            f"कृपया {med_label} ची {_format_qty_mr(qty)} {item_mr} "
             f"फक्त गरज असल्यास {meal['mr']} घ्या."
         )
         return {"en": en, "hi": hi, "mr": mr}
@@ -539,15 +539,15 @@ def build_multilingual_instructions(
     slots_mr = " आणि ".join(s.label_mr for s in schedule_slots)
 
     en = (
-        f"Nani, please take {_format_qty(qty)} {item_en} of {med_label} "
+        f"Please take {_format_qty(qty)} {item_en} of {med_label} "
         f"in the {slots_en}, {meal['en']}."
     )
     hi = (
-        f"नानी जी, {slots_hi} {meal_hi} {med_label} की "
+        f"कृपया {slots_hi} {meal_hi} {med_label} की "
         f"{_format_qty_hi(qty)} {item_hi} लीजिए।"
     )
     mr = (
-        f"आजी, {slots_mr} {meal_mr} {med_label} ची "
+        f"कृपया {slots_mr} {meal_mr} {med_label} ची "
         f"{_format_qty_mr(qty)} {item_mr} घ्या."
     )
     return {"en": en, "hi": hi, "mr": mr}
@@ -562,7 +562,7 @@ def build_slot_spoken_text(
     language: str = "hi",
     visual_desc: dict[str, str] | None = None,
 ) -> str:
-    """Build a focused single-slot spoken audio prompt (with pill size/color/shape) for a Nani Mode card."""
+    """Build a focused single-slot spoken audio prompt (with pill size/color/shape) for Elder Mode."""
     med_label = f"{brand_name} {strength}".strip() if strength else brand_name.strip()
     form = _FORM_LABELS.get(dosage_form, _FORM_LABELS["tablet"])
     meal = _MEAL_PHRASES.get(meal_relation, _MEAL_PHRASES["after_food"])
@@ -582,16 +582,16 @@ def build_slot_spoken_text(
 
     if language == "mr":
         return (
-            f"आजी, {slot.label_mr} {meal_mr} {med_label} ची "
+            f"कृपया {slot.label_mr} {meal_mr} {med_label} ची "
             f"{_format_qty_mr(slot.dose_qty)} {item_mr} घ्या."
         )
     if language == "en":
         return (
-            f"Nani, for {slot.label_en} at {slot.time}, please take "
+            f"For {slot.label_en} at {slot.time}, please take "
             f"{_format_qty(slot.dose_qty)} {item_en} of {med_label} {meal['en']}."
         )
     return (
-        f"नानी जी, {slot.label_hi} {meal_hi} {med_label} की "
+        f"कृपया {slot.label_hi} {meal_hi} {med_label} की "
         f"{_format_qty_hi(slot.dose_qty)} {item_hi} लीजिए।"
     )
 
@@ -1053,9 +1053,9 @@ def evaluate_vitals(
                     status="caution",
                     code="LOW_BP",
                     value_display=val,
-                    message_en=f"Low blood pressure ({val}). Have Nani sit/lie down slowly and hydrate.",
-                    message_hi=f"बीपी कम है ({val})। नानी जी को आराम से बैठाएं और पानी/ओआरएस दें।",
-                    message_mr=f"रक्तदाब कमी आहे ({val}). आजींना आरामशीर बसवा आणि पाणी/ओआरएस द्या.",
+                    message_en=f"Low blood pressure ({val}). Sit or lie down slowly and have water or ORS.",
+                    message_hi=f"बीपी कम है ({val})। आराम से बैठ जाएं या लेट जाएं और पानी या ओआरएस पिएं।",
+                    message_mr=f"रक्तदाब कमी आहे ({val}). आरामशीर बसा किंवा झोपा आणि पाणी किंवा ओआरएस प्या.",
                 )
             )
         elif systolic_mmhg >= 140 or diastolic_mmhg >= 90:

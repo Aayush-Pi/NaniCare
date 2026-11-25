@@ -586,7 +586,7 @@ export async function fetchSchedule(shareCode: string): Promise<ScheduleResponse
     if (Array.isArray(raw.medicines)) {
       return {
         share_code: String(raw.share_code ?? normalizedCode),
-        patient_name: String(raw.patient_name ?? raw.elder_name ?? "Nani"),
+        patient_name: String(raw.patient_name ?? raw.elder_name ?? "Family Member"),
         caregiver_name: caregiverName,
         emergency_contact: emergencyContact,
         medicines: (raw.medicines as VerifiedMedicine[]).filter((m) =>
@@ -657,7 +657,7 @@ export async function fetchSchedule(shareCode: string): Promise<ScheduleResponse
 
     return {
       share_code: String(raw.share_code ?? normalizedCode),
-      patient_name: String(raw.elder_name ?? raw.patient_name ?? "Nani"),
+      patient_name: String(raw.elder_name ?? raw.patient_name ?? "Family Member"),
       caregiver_name: caregiverName,
       emergency_contact: emergencyContact,
       medicines: Array.from(grouped.values()),
@@ -667,7 +667,7 @@ export async function fetchSchedule(shareCode: string): Promise<ScheduleResponse
   const emergency = loadEmergencyContact();
   return {
     share_code: normalizedCode,
-    patient_name: "Nani",
+    patient_name: "Family Member",
     caregiver_name: emergency.name,
     emergency_contact: emergency,
     medicines: loadVerifiedMedicines(normalizedCode),
@@ -798,7 +798,7 @@ export async function listProfiles(): Promise<ProfileInfo[]> {
       const data = (await response.json()) as Record<string, unknown>[];
       return data.map((p) => ({
         share_code: String(p.share_code ?? DEFAULT_SHARE_CODE),
-        elder_name: String(p.elder_name ?? "Nani"),
+        elder_name: String(p.elder_name ?? "Family Member"),
         age: typeof p.age === "number" ? p.age : null,
         preferred_language: (p.preferred_language as LanguageCode) || "hi",
         caregiver_name: p.caregiver_name ? String(p.caregiver_name) : null,
@@ -818,7 +818,7 @@ export async function listProfiles(): Promise<ProfileInfo[]> {
   }
   return Array.from(counts.entries()).map(([code, count]) => ({
     share_code: code,
-    elder_name: code === DEFAULT_SHARE_CODE ? "Kamla Nani" : `Profile ${code}`,
+    elder_name: code === DEFAULT_SHARE_CODE ? "Kamla Sharma" : `Profile ${code}`,
     preferred_language: "hi",
     active_medicine_count: count,
   }));
@@ -866,7 +866,7 @@ export async function createProfile(req: {
 
   const randomCode =
     req.share_code?.trim().toUpperCase() ||
-    `NANI${Math.floor(10 + Math.random() * 89)}`;
+    `CARE${Math.floor(10 + Math.random() * 89)}`;
   return {
     share_code: randomCode,
     elder_name: req.elder_name.trim(),
@@ -988,7 +988,7 @@ export async function saveProfileContact(
 ): Promise<void> {
   if (!FASTAPI_BASE_URL) return;
   const normalizedCode = shareCode.trim().toUpperCase();
-  let elderName = "Nani";
+  let elderName = "Family Member";
   let preferredLang: LanguageCode = "hi";
   try {
     const existingRes = await fetch(
@@ -1086,7 +1086,7 @@ export async function fetchProfileSummary(
 
   return {
     share_code: normalizedCode,
-    patient_name: "Nani",
+    patient_name: "Family Member",
     generated_at: new Date().toISOString(),
     adherence_taken: takenDoses,
     adherence_total: totalDoses,

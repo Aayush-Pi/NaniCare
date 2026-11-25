@@ -93,7 +93,7 @@ export function ModeSelect({
   function handleUseDemoProfile() {
     onChangeShareCode(DEFAULT_SHARE_CODE);
     setProfileError("");
-    setProfileNotice(`Loaded demo profile ${DEFAULT_SHARE_CODE} (Kamla Nani).`);
+    setProfileNotice(`Loaded demo profile ${DEFAULT_SHARE_CODE} (Kamla Sharma).`);
   }
 
   return (
@@ -280,7 +280,7 @@ export function ModeSelect({
               id="quick-elder-name"
               type="text"
               required
-              placeholder="e.g. Sunita Nani"
+              placeholder="e.g. Kamla Sharma"
               value={elderName}
               onChange={(e) => setElderName(e.target.value)}
               className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-950 dark:text-white text-sm"

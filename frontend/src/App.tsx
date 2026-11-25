@@ -42,7 +42,7 @@ export default function App() {
   const [verifiedMedicines, setVerifiedMedicines] = useState<VerifiedMedicine[]>(
     () => loadVerifiedMedicines(loadShareCode())
   );
-  const [patientName, setPatientName] = useState<string>("Kamla Nani");
+  const [patientName, setPatientName] = useState<string>("Kamla Sharma");
   const [vitals, setVitals] = useState<VitalLogEntry[]>(() =>
     loadVitals(loadShareCode())
   );

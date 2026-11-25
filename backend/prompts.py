@@ -172,7 +172,7 @@ DEMO_PRESCRIPTION_PAYLOAD: dict[str, Any] = {
 
 DEMO_PROFILE_SEED: dict[str, Any] = {
     "share_code": "DEMO01",
-    "elder_name": "Kamla Nani",
+    "elder_name": "Kamla Sharma",
     "age": 72,
     "preferred_language": "hi",
     "caregiver_name": "Aarav Sharma",

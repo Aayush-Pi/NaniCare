@@ -462,7 +462,7 @@ export function CaregiverPage({
             <input
               type="text"
               required
-              placeholder="e.g. Meera Dadi"
+              placeholder="e.g. Rajesh Sharma"
               value={newElderName}
               onChange={(e) => setNewElderName(e.target.value)}
               className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
