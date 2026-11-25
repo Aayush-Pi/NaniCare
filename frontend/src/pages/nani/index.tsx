@@ -46,6 +46,7 @@ import { getCurrentTimeSlot } from "../../utils/scheduler";
 import {
   buildVerifiedSlotSpeech,
   getMedicineSpokenText,
+  prefetchSpeech,
   speakText,
   stopSpeaking,
 } from "../../utils/tts";
@@ -504,6 +505,22 @@ export function NaniPage({
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [screen]);
+
+  // Clear TTS error on language change
+  useEffect(() => {
+    setTtsError("");
+  }, [language]);
+
+  // Pre-warm neural TTS audio in the background so tapping Hear plays immediately
+  useEffect(() => {
+    if (strictlyVerified.length === 0) return;
+    const slotScript = buildVerifiedSlotSpeech(strictlyVerified, nowSlot, language);
+    prefetchSpeech(slotScript, language);
+    for (const med of strictlyVerified.slice(0, 6)) {
+      const medText = getMedicineSpokenText(med, language);
+      if (medText) prefetchSpeech(medText, language);
+    }
+  }, [strictlyVerified, nowSlot, language]);
 
   /* ---------- derived data ---------- */
   const doseRows = useMemo(() => {

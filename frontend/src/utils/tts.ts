@@ -4,11 +4,18 @@ import { LanguageCode, TimeSlotKey, VerifiedMedicine } from "../types/api";
 const FASTAPI_BASE_URL = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
 
 const AUDIO_CACHE_MAX = 64;
+const TTS_FETCH_TIMEOUT_MS = 2800;
 const audioUrlCache = new Map<string, string>();
+const inFlightFetches = new Map<string, Promise<string>>();
 
 let activeAudio: HTMLAudioElement | null = null;
 let activeAbortController: AbortController | null = null;
 let playbackGeneration = 0;
+
+// Pre-warm browser speechSynthesis voices so fallback doesn't block on voiceschanged.
+if (typeof window !== "undefined" && "speechSynthesis" in window) {
+  window.speechSynthesis.getVoices();
+}
 
 export function isSpeechSynthesisSupported(): boolean {
   return (
@@ -172,24 +179,46 @@ function cacheAudioUrl(key: string, url: string): void {
   }
 }
 
-async function playNeuralAudio(
+function normalizeTtsText(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
+}
+
+function fetchAndCacheTts(
   text: string,
   language: LanguageCode,
-  gen: number,
-  callbacks?: SpeechCallbacks
-): Promise<void> {
-  const cacheKey = `${language}::${text}`;
-  let objectUrl = audioUrlCache.get(cacheKey);
+  externalSignal?: AbortSignal
+): Promise<string> {
+  const cleaned = normalizeTtsText(text);
+  const cacheKey = `${language}::${cleaned}`;
 
-  if (!objectUrl) {
-    const controller = new AbortController();
-    activeAbortController = controller;
+  const cached = audioUrlCache.get(cacheKey);
+  if (cached) {
+    return Promise.resolve(cached);
+  }
 
+  const existing = inFlightFetches.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), TTS_FETCH_TIMEOUT_MS);
+
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
+
+  const promise = (async () => {
     try {
       const res = await fetch(`${FASTAPI_BASE_URL}/tts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, language }),
+        body: JSON.stringify({ text: cleaned, language }),
         signal: controller.signal,
       });
 
@@ -198,15 +227,57 @@ async function playNeuralAudio(
       }
 
       const blob = await res.blob();
-      if (gen !== playbackGeneration) return;
-
-      objectUrl = URL.createObjectURL(blob);
+      const objectUrl = URL.createObjectURL(blob);
       cacheAudioUrl(cacheKey, objectUrl);
+      return objectUrl;
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (externalSignal) {
+        externalSignal.removeEventListener("abort", onExternalAbort);
+      }
+      inFlightFetches.delete(cacheKey);
+    }
+  })();
+
+  inFlightFetches.set(cacheKey, promise);
+  return promise;
+}
+
+export function prefetchSpeech(text: string, language: LanguageCode): void {
+  if (!FASTAPI_BASE_URL) return;
+  const cleaned = normalizeTtsText(text);
+  if (!cleaned) return;
+  void fetchAndCacheTts(cleaned, language).catch(() => {
+    // Ignore background prefetch errors; live playback will retry or fall back.
+  });
+}
+
+async function playNeuralAudio(
+  text: string,
+  language: LanguageCode,
+  gen: number,
+  callbacks?: SpeechCallbacks
+): Promise<void> {
+  const cleaned = normalizeTtsText(text);
+  const cacheKey = `${language}::${cleaned}`;
+  let objectUrl = audioUrlCache.get(cacheKey);
+
+  if (!objectUrl) {
+    const controller = new AbortController();
+    activeAbortController = controller;
+
+    try {
+      objectUrl = await fetchAndCacheTts(cleaned, language, controller.signal);
+      if (gen !== playbackGeneration) return;
     } catch (err) {
-      if ((err as Error)?.name === "AbortError" || gen !== playbackGeneration) {
+      if (gen !== playbackGeneration) {
         return;
       }
-      await speakWithBrowserFallback(text, language, gen, true, callbacks);
+      // If aborted by stopSpeaking(), do not fall back; if aborted by timeout or network error, fall back.
+      if ((err as Error)?.name === "AbortError" && activeAbortController !== controller) {
+        return;
+      }
+      await speakWithBrowserFallback(cleaned, language, gen, true, callbacks);
       return;
     } finally {
       if (activeAbortController === controller) {

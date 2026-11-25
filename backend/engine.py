@@ -6,6 +6,7 @@ Powered by FastAPI, Gemini Vision (Structured Outputs), and Neon PostgreSQL.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import logging
@@ -2465,16 +2466,10 @@ _TTS_VOICE_MAP: dict[str, str] = {
 }
 _TTS_CACHE: OrderedDict[tuple[str, str], bytes] = OrderedDict()
 _TTS_CACHE_MAX_ITEMS = 128
+_TTS_INFLIGHT: dict[tuple[str, str], asyncio.Task[bytes]] = {}
 
 
-async def _synthesize_neural_tts(text: str, language: str) -> tuple[bytes, str]:
-    """Synthesize natural Indian neural speech (MP3) using edge-tts with LRU caching."""
-    voice = _TTS_VOICE_MAP.get(language, _TTS_VOICE_MAP["en"])
-    cache_key = (voice, text)
-    if cache_key in _TTS_CACHE:
-        _TTS_CACHE.move_to_end(cache_key)
-        return _TTS_CACHE[cache_key], voice
-
+async def _run_edge_tts(text: str, voice: str) -> bytes:
     import edge_tts
 
     communicator = edge_tts.Communicate(text=text, voice=voice, rate="-6%")
@@ -2486,6 +2481,27 @@ async def _synthesize_neural_tts(text: str, language: str) -> tuple[bytes, str]:
     audio_bytes = bytes(audio_buf)
     if not audio_bytes:
         raise RuntimeError(f"Empty audio stream from {voice}")
+    return audio_bytes
+
+
+async def _synthesize_neural_tts(text: str, language: str) -> tuple[bytes, str]:
+    """Synthesize natural Indian neural speech (MP3) using edge-tts with LRU caching."""
+    voice = _TTS_VOICE_MAP.get(language, _TTS_VOICE_MAP["en"])
+    cache_key = (voice, text)
+    if cache_key in _TTS_CACHE:
+        _TTS_CACHE.move_to_end(cache_key)
+        return _TTS_CACHE[cache_key], voice
+
+    task = _TTS_INFLIGHT.get(cache_key)
+    if task is None:
+        task = asyncio.create_task(_run_edge_tts(text, voice))
+        _TTS_INFLIGHT[cache_key] = task
+
+    try:
+        audio_bytes = await task
+    finally:
+        if _TTS_INFLIGHT.get(cache_key) is task and task.done():
+            _TTS_INFLIGHT.pop(cache_key, None)
 
     _TTS_CACHE[cache_key] = audio_bytes
     if len(_TTS_CACHE) > _TTS_CACHE_MAX_ITEMS:
