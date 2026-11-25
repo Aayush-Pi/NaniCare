@@ -592,19 +592,92 @@ def _detect_drug_classes(brand_name: str, generic_name: str | None) -> set[str]:
     return detected
 
 
+_ALLERGY_TRIGGERS: list[tuple[tuple[str, ...], str, tuple[str, ...]]] = [
+    (
+        ("penicillin", "amoxicillin", "beta-lactam", "beta lactam"),
+        "Penicillin / Beta-Lactam",
+        ("amoxicillin", "augmentin", "amoxyclav", "clavam", "moxikind", "ampicillin", "penicillin", "piperacillin"),
+    ),
+    (
+        ("cephalosporin", "cefixime", "cefpodoxime"),
+        "Cephalosporin",
+        ("cefixime", "cefpodoxime", "opox", "taxim", "zifi", "ceftriaxone", "cefuroxime", "gudcef"),
+    ),
+    (
+        ("sulfa", "sulfonamide", "cotrimoxazole"),
+        "Sulfa Drug",
+        ("sulfamethoxazole", "septran", "bactrim", "cotrimoxazole", "sulfasalazine", "glimepiride", "amaryl", "gemer", "glipizide", "gliclazide", "glibenclamide"),
+    ),
+    (
+        ("aspirin", "salicylate"),
+        "Aspirin",
+        ("aspirin", "ecosprin", "loprin", "disprin"),
+    ),
+    (
+        ("nsaid", "ibuprofen", "diclofenac", "painkiller"),
+        "NSAID Painkiller",
+        ("ibuprofen", "brufen", "combiflam", "diclofenac", "voveran", "aceclofenac", "zerodol", "altrase", "naproxen", "etoricoxib", "nucoxia"),
+    ),
+    (
+        ("paracetamol", "acetaminophen"),
+        "Paracetamol",
+        ("paracetamol", "acetaminophen", "dolo", "crocin", "calpol", "pacimol"),
+    ),
+    (
+        ("statin", "atorvastatin", "rosuvastatin"),
+        "Statin",
+        ("atorvastatin", "atorva", "rosuvastatin", "rosuvas", "simvastatin", "lipitor", "crestor"),
+    ),
+]
+
+
+def _find_allergy_conflicts(
+    brand_name: str,
+    generic_name: str | None,
+    known_allergies: list[str] | None,
+) -> list[str]:
+    """Return human-readable allergy labels that conflict with this medicine."""
+    if not known_allergies:
+        return []
+    med_text = f"{brand_name} {generic_name or ''}".lower()
+    matched_labels: list[str] = []
+
+    for raw_allergy in known_allergies:
+        allergy = str(raw_allergy or "").strip()
+        if not allergy:
+            continue
+        allergy_lower = allergy.lower()
+
+        matched_via_rule = False
+        for allergy_keys, label, drug_tokens in _ALLERGY_TRIGGERS:
+            if any(k in allergy_lower for k in allergy_keys):
+                if any(tok in med_text for tok in drug_tokens):
+                    if label not in matched_labels:
+                        matched_labels.append(label)
+                    matched_via_rule = True
+
+        if not matched_via_rule and len(allergy_lower) >= 4 and allergy_lower in med_text:
+            if allergy not in matched_labels:
+                matched_labels.append(allergy)
+
+    return matched_labels
+
+
 def evaluate_medicine_safety(
     medicines: list[dict[str, Any]],
+    known_allergies: list[str] | None = None,
 ) -> tuple[dict[int, list[SafetyFlag]], list[SafetyFlag]]:
-    """Run deterministic OCR confidence, geriatric high-alert, duplicate, and interaction checks.
+    """Run deterministic OCR confidence, allergy, geriatric high-alert, duplicate, and interaction checks.
 
     Args:
         medicines: Sequence of medicine dicts with keys `brand_name`, `generic_name`,
             `strength`, `dosage_pattern`, `meal_relation`, `confidence`, `low_confidence_fields`.
+        known_allergies: Optional list of patient allergies from Profile.known_allergies.
 
     Returns:
         Tuple of:
           - per_medicine_flags: dict mapping index -> list[SafetyFlag]
-          - regimen_flags: list[SafetyFlag] covering regimen-wide duplicates & interactions
+          - regimen_flags: list[SafetyFlag] covering regimen-wide allergies, duplicates & interactions
     """
     per_med: dict[int, list[SafetyFlag]] = {idx: [] for idx in range(len(medicines))}
     regimen_flags: list[SafetyFlag] = []
@@ -687,6 +760,30 @@ def evaluate_medicine_safety(
                     affected_medicines=[brand],
                 )
             )
+
+        # 4b. Known patient allergy conflict check (zero-token critical check)
+        allergy_hits = _find_allergy_conflicts(brand, generic, known_allergies)
+        for allergy_label in allergy_hits:
+            allergy_flag = SafetyFlag(
+                code="ALLERGY_CONFLICT",
+                severity="critical",
+                title=f"Allergy Alert ({allergy_label})",
+                message_en=(
+                    f"{brand} may conflict with recorded {allergy_label} allergy. "
+                    "Do NOT give without doctor confirmation."
+                ),
+                message_hi=(
+                    f"{brand} दर्ज एलर्जी ({allergy_label}) के कारण नुकसान कर सकती है। "
+                    "डॉक्टर से पूछे बिना न दें।"
+                ),
+                message_mr=(
+                    f"{brand} नोंदवलेल्या अ‍ॅलर्जीमुळे ({allergy_label}) धोकादायक ठरू शकते. "
+                    "डॉक्टरांच्या सल्ल्याशिवाय देऊ नका."
+                ),
+                affected_medicines=[brand],
+            )
+            per_med[idx].append(allergy_flag)
+            regimen_flags.append(allergy_flag)
 
     # 5. Duplicate active ingredient / therapeutic class checks
     for cls_key in ("paracetamol", "ppi", "nsaid", "statin", "sulfonylurea", "arb_acei"):
@@ -1255,6 +1352,59 @@ def _clean_phone_for_wa(phone: str | None) -> str:
     return digits
 
 
+def compute_refill_status(
+    brand_name: str,
+    created_at: datetime,
+    duration_days: int | None,
+    today_ist: date | None = None,
+) -> tuple[int, int | None, str, str, str, str]:
+    """Compute elapsed days, remaining days, status, and EN/HI/MR refill messages."""
+    ref_today = today_ist or get_ist_today()
+    ts = created_at
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    start_date_ist = ts.astimezone(IST_TZ).date()
+    days_elapsed = max(0, (ref_today - start_date_ist).days)
+
+    if duration_days is None:
+        return (
+            days_elapsed,
+            None,
+            "ongoing",
+            f"{brand_name}: Ongoing daily medicine.",
+            f"{brand_name}: नियमित चलने वाली दवा।",
+            f"{brand_name}: नियमित चालणारे औषध.",
+        )
+
+    days_remaining = max(0, duration_days - days_elapsed)
+    if days_remaining == 0:
+        return (
+            days_elapsed,
+            0,
+            "completed",
+            f"{brand_name}: {duration_days}-day course completed. Check with doctor if refill is needed.",
+            f"{brand_name}: {duration_days} दिन का कोर्स पूरा हुआ। रिफिल के लिए डॉक्टर से पूछें।",
+            f"{brand_name}: {duration_days} दिवसांचा कोर्स पूर्ण झाला आहे. रिफिलसाठी डॉक्टरांचा सल्ला घ्या.",
+        )
+    if days_remaining <= 3:
+        return (
+            days_elapsed,
+            days_remaining,
+            "refill_soon",
+            f"{brand_name}: Only {days_remaining} day(s) left — arrange refill soon.",
+            f"{brand_name}: केवल {days_remaining} दिन की दवा बची है — जल्द रिफिल मंगाएँ।",
+            f"{brand_name}: फक्त {days_remaining} दिवसांचे औषध शिल्लक आहे — लवकर रिफिल आणा.",
+        )
+    return (
+        days_elapsed,
+        days_remaining,
+        "ok",
+        f"{brand_name}: {days_remaining} days remaining out of {duration_days}.",
+        f"{brand_name}: {duration_days} में से {days_remaining} दिन बाकी हैं।",
+        f"{brand_name}: {duration_days} पैकी {days_remaining} दिवस शिल्लक आहेत.",
+    )
+
+
 def build_whatsapp_summary(
     elder_name: str,
     share_code: str,
@@ -1269,6 +1419,7 @@ def build_whatsapp_summary(
     abnormal_vital_flags: list[VitalFlag],
     active_safety_flags: list[SafetyFlag],
     caregiver_phone: str | None = None,
+    refill_alerts: list[str] | None = None,
 ) -> tuple[str, str]:
     """Generate a clean family WhatsApp daily report and ready-to-click wa.me deep link."""
     date_label = report_date.strftime("%d %b %Y")
@@ -1305,6 +1456,12 @@ def build_whatsapp_summary(
         lines.append("Medicine Safety Notes:")
         for flag in important_safety[:3]:
             lines.append(f"- {flag.title}: {flag.message_en}")
+
+    if refill_alerts:
+        lines.append("")
+        lines.append("Refill Reminders:")
+        for note in refill_alerts[:4]:
+            lines.append(f"- {note}")
 
     lines.append("")
     lines.append("Sent via NaniCare Family Companion")

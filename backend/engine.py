@@ -22,7 +22,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, check_db_connection, get_db, init_db
-from models import DoseLog, Medicine, Profile, VitalLog
+from models import DoseLog, Medicine, MedicineCatalog, Profile, VitalLog
 from prompts import DEMO_PRESCRIPTION_PAYLOAD, DEMO_PROFILE_SEED, DEMO_THUMBNAILS, GEMINI_VISION_SYSTEM_PROMPT
 from scheduler import (
     LOW_CONFIDENCE_THRESHOLD,
@@ -31,6 +31,7 @@ from scheduler import (
     build_slot_spoken_text,
     build_whatsapp_summary,
     compute_dose_status,
+    compute_refill_status,
     evaluate_medicine_safety,
     evaluate_vitals,
     generate_share_code,
@@ -40,6 +41,10 @@ from scheduler import (
     pick_pill_color_tag,
 )
 from schemas import (
+    CatalogEntryResponse,
+    CatalogLookupRequest,
+    CatalogLookupResponse,
+    DailyAdherencePoint,
     DailySummaryResponse,
     DoseLogResponse,
     DoseMarkRequest,
@@ -55,15 +60,29 @@ from schemas import (
     PrescriptionExtractionOutput,
     ProfileCreateRequest,
     ProfileResponse,
+    RefillItem,
+    RefillsResponse,
     SafetyFlag,
     ScanResponse,
     ScheduleSlot,
+    StripVerifyResponse,
+    TrendsResponse,
     TTSRequest,
+    VisualSpec,
     VitalCreateRequest,
     VitalDeleteResponse,
     VitalFlag,
     VitalResponse,
     VitalsHistoryResponse,
+    VitalsTrendSummary,
+)
+from visuals import (
+    base_brand_root,
+    default_visual_spec_for_form,
+    load_seed_catalog,
+    normalize_medicine_key,
+    render_medicine_svg,
+    sanitize_hex,
 )
 
 logging.basicConfig(
@@ -197,14 +216,243 @@ def _call_gemini_vision_with_fallback(
     raise last_exc
 
 
+def _seed_medicine_catalog(db: Session) -> int:
+    """Idempotently seed the Indian medicine visual catalog into medicine_catalog."""
+    seed_rows = load_seed_catalog()
+    if not seed_rows:
+        return 0
+    existing_keys = set(db.scalars(select(MedicineCatalog.normalized_key)))
+    added = 0
+    for row in seed_rows:
+        key = normalize_medicine_key(str(row.get("key") or row.get("brand_name") or ""))
+        if not key or key in existing_keys:
+            continue
+        db.add(
+            MedicineCatalog(
+                normalized_key=key,
+                brand_name=str(row.get("brand_name") or key).strip(),
+                aliases=[str(a).strip() for a in (row.get("aliases") or []) if str(a).strip()],
+                generic_name=row.get("generic_name"),
+                therapeutic_class=row.get("therapeutic_class"),
+                dosage_form=str(row.get("dosage_form") or "tablet"),
+                visual_spec=dict(row.get("visual_spec") or {}),
+                source="seed_catalog",
+            )
+        )
+        existing_keys.add(key)
+        added += 1
+    if added:
+        db.commit()
+        logger.info("Seeded %d Indian medicine visual catalog entries", added)
+    return added
+
+
+def _find_catalog_entry(
+    db: Session | None,
+    brand_name: str,
+    generic_name: str | None = None,
+) -> MedicineCatalog | None:
+    """Tier-1 zero-token lookup in medicine_catalog by exact key, brand root, or alias."""
+    if db is None:
+        return None
+    candidates = {
+        normalize_medicine_key(brand_name),
+        base_brand_root(brand_name),
+    }
+    if generic_name:
+        candidates.add(normalize_medicine_key(generic_name))
+        candidates.add(base_brand_root(generic_name))
+    candidates.discard("")
+    if not candidates:
+        return None
+
+    direct = db.scalar(
+        select(MedicineCatalog).where(MedicineCatalog.normalized_key.in_(candidates)).limit(1)
+    )
+    if direct:
+        return direct
+
+    all_entries = list(db.scalars(select(MedicineCatalog)))
+    brand_lower = brand_name.strip().lower()
+    generic_lower = (generic_name or "").strip().lower()
+    for entry in all_entries:
+        alias_keys = {normalize_medicine_key(a) for a in (entry.aliases or [])}
+        alias_roots = {base_brand_root(a) for a in (entry.aliases or [])}
+        if candidates & (alias_keys | alias_roots):
+            return entry
+        for alias in entry.aliases or []:
+            al = alias.strip().lower()
+            if len(al) >= 4 and (al in brand_lower or (generic_lower and al in generic_lower)):
+                return entry
+    return None
+
+
+def _serialize_catalog_entry(
+    entry: MedicineCatalog,
+    display_brand: str | None = None,
+    strength: str | None = None,
+) -> CatalogEntryResponse:
+    spec_dict = dict(entry.visual_spec or default_visual_spec_for_form(entry.dosage_form))
+    spec = VisualSpec.model_validate(spec_dict)
+    thumb = render_medicine_svg(
+        brand_name=display_brand or entry.brand_name,
+        strength=strength,
+        visual_spec=spec.model_dump(),
+        dosage_form=entry.dosage_form,
+    )
+    return CatalogEntryResponse(
+        id=entry.id,
+        normalized_key=entry.normalized_key,
+        brand_name=entry.brand_name,
+        aliases=list(entry.aliases or []),
+        generic_name=entry.generic_name,
+        therapeutic_class=entry.therapeutic_class,
+        dosage_form=entry.dosage_form,
+        visual_spec=spec,
+        strip_thumbnail=thumb,
+        source=entry.source,
+    )
+
+
+def _resolve_medicine_visual(
+    db: Session | None,
+    brand_name: str,
+    generic_name: str | None,
+    strength: str | None,
+    dosage_form: str,
+    fallback_accent: str,
+    source_type: str = "prescription",
+    uploaded_thumbnail: str | None = None,
+    single_medicine: bool = False,
+    ai_shape: str | None = None,
+    ai_primary_hex: str | None = None,
+    ai_secondary_hex: str | None = None,
+    ai_accent_hex: str | None = None,
+) -> tuple[str, str, str | None]:
+    """3-Tier token-efficient visual resolver returning (data_uri, visual_source, resolved_generic)."""
+    if source_type == "blister_strip" and uploaded_thumbnail and single_medicine:
+        return uploaded_thumbnail, "uploaded_strip", generic_name
+
+    # Tier 1: Local DB catalog hit (0 AI tokens)
+    entry = _find_catalog_entry(db, brand_name, generic_name)
+    if entry is not None:
+        svg = render_medicine_svg(
+            brand_name=brand_name,
+            strength=strength,
+            visual_spec=entry.visual_spec,
+            dosage_form=dosage_form or entry.dosage_form,
+            fallback_accent=fallback_accent,
+        )
+        return svg, "catalog_verified", generic_name or entry.generic_name
+
+    # Tier 2: Piggybacked compact visual hint from Gemini Vision scan (~15-20 tokens)
+    if ai_shape or ai_primary_hex or ai_accent_hex:
+        spec = default_visual_spec_for_form(dosage_form, ai_accent_hex or fallback_accent)
+        if ai_shape:
+            spec["shape"] = ai_shape
+        if ai_primary_hex:
+            spec["primary_color"] = sanitize_hex(ai_primary_hex, spec["primary_color"])
+        if ai_secondary_hex:
+            spec["secondary_color"] = sanitize_hex(ai_secondary_hex, "#FFFFFF")
+        if ai_accent_hex:
+            spec["strip_accent"] = sanitize_hex(ai_accent_hex, fallback_accent)
+        svg = render_medicine_svg(
+            brand_name=brand_name,
+            strength=strength,
+            visual_spec=spec,
+            dosage_form=dosage_form,
+            fallback_accent=fallback_accent,
+        )
+        return svg, "ai_inferred", generic_name
+
+    # Tier 3: Deterministic zero-token generic vector fallback
+    fallback_spec = default_visual_spec_for_form(dosage_form, fallback_accent)
+    svg = render_medicine_svg(
+        brand_name=brand_name,
+        strength=strength,
+        visual_spec=fallback_spec,
+        dosage_form=dosage_form,
+        fallback_accent=fallback_accent,
+    )
+    return svg, "generic_fallback", generic_name
+
+
+def _upsert_catalog_on_confirm(db: Session, med: Medicine) -> None:
+    """Auto-cache caregiver-confirmed new medicines into medicine_catalog for future 0-token hits."""
+    if _find_catalog_entry(db, med.brand_name, med.generic_name) is not None:
+        return
+    key = base_brand_root(med.brand_name) or normalize_medicine_key(med.brand_name)
+    if not key:
+        return
+    if db.scalar(select(MedicineCatalog.id).where(MedicineCatalog.normalized_key == key)):
+        return
+    db.add(
+        MedicineCatalog(
+            normalized_key=key,
+            brand_name=med.brand_name.strip(),
+            aliases=[med.brand_name.strip().lower()],
+            generic_name=med.generic_name,
+            therapeutic_class=None,
+            dosage_form=med.dosage_form or "tablet",
+            visual_spec=default_visual_spec_for_form(med.dosage_form, med.pill_color_tag),
+            source="caregiver_confirmed",
+        )
+    )
+
+
+def _call_gemini_catalog_lookup(
+    query: str,
+    dosage_form: str,
+    api_key: str,
+) -> tuple[str | None, str | None, VisualSpec]:
+    """Tiny ~40-token text-only Gemini lookup for unknown Indian medicines."""
+    from google import genai
+    from google.genai import types
+    from pydantic import BaseModel
+
+    class _MiniLookup(BaseModel):
+        generic_name: str | None = None
+        therapeutic_class: str | None = None
+        visual_spec: VisualSpec
+
+    client = genai.Client(api_key=api_key)
+    prompt = (
+        f"Indian medicine lookup for '{query}' (form: {dosage_form}). "
+        "Return generic_name, therapeutic_class, and a compact visual_spec "
+        "(shape, primary_color hex, optional secondary_color hex, strip_accent hex, short imprint <=5 chars)."
+    )
+    for model_name in ("gemini-3.5-flash-lite", GEMINI_MODEL, "gemini-3.5-flash"):
+        try:
+            resp = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                    response_schema=_MiniLookup,
+                ),
+            )
+            parsed = (
+                resp.parsed
+                if isinstance(getattr(resp, "parsed", None), _MiniLookup)
+                else _MiniLookup.model_validate_json((resp.text or "").strip())
+            )
+            return parsed.generic_name, parsed.therapeutic_class, parsed.visual_spec
+        except Exception as exc:
+            logger.warning("Catalog AI lookup failed on %s: %s", model_name, type(exc).__name__)
+    raise RuntimeError("All Gemini models failed for catalog lookup.")
+
+
 def _enrich_extraction(
     extraction: PrescriptionExtractionOutput,
     source: str,
     model_used: str,
     uploaded_thumbnail: str | None = None,
     extra_warnings: list[str] | None = None,
+    db: Session | None = None,
+    known_allergies: list[str] | None = None,
 ) -> ScanResponse:
-    """Run deterministic Indian schedule + safety enrichment on AI-extracted medicines."""
+    """Run deterministic Indian schedule + safety + vector visual enrichment on AI-extracted medicines."""
     med_dicts_for_safety: list[dict[str, Any]] = []
     parsed_entries: list[tuple[Any, list[ScheduleSlot], bool, str, Any]] = []
 
@@ -228,10 +476,14 @@ def _enrich_extraction(
             }
         )
 
-    per_med_flags, regimen_flags = evaluate_medicine_safety(med_dicts_for_safety)
+    per_med_flags, regimen_flags = evaluate_medicine_safety(
+        med_dicts_for_safety,
+        known_allergies=known_allergies,
+    )
 
     enriched: list[EnrichedScannedMedicine] = []
     low_conf_count = 0
+    is_single = len(parsed_entries) == 1
 
     for idx, (med, slots, as_needed, normalized_pattern, effective_meal) in enumerate(parsed_entries):
         flags = per_med_flags.get(idx, [])
@@ -259,12 +511,27 @@ def _enrich_extraction(
             frequency_notes=med.frequency_notes,
         )
 
-        strip_thumb = uploaded_thumbnail or DEMO_THUMBNAILS.get(med.brand_name)
+        color_tag = pick_pill_color_tag(slots, as_needed)
+        strip_thumb, visual_source, resolved_generic = _resolve_medicine_visual(
+            db=db,
+            brand_name=med.brand_name,
+            generic_name=med.generic_name,
+            strength=med.strength,
+            dosage_form=med.dosage_form,
+            fallback_accent=color_tag,
+            source_type=extraction.source_type,
+            uploaded_thumbnail=uploaded_thumbnail,
+            single_medicine=is_single,
+            ai_shape=med.pill_shape,
+            ai_primary_hex=med.pill_color_hex,
+            ai_secondary_hex=med.pill_secondary_color_hex,
+            ai_accent_hex=med.strip_accent_hex,
+        )
 
         enriched.append(
             EnrichedScannedMedicine(
                 brand_name=med.brand_name,
-                generic_name=med.generic_name,
+                generic_name=resolved_generic,
                 strength=med.strength,
                 dosage_form=med.dosage_form,
                 dosage_pattern=normalized_pattern,
@@ -275,8 +542,9 @@ def _enrich_extraction(
                 instructions_en=scripts["en"],
                 instructions_hi=scripts["hi"],
                 instructions_mr=scripts["mr"],
-                pill_color_tag=pick_pill_color_tag(slots, as_needed),
+                pill_color_tag=color_tag,
                 strip_thumbnail=strip_thumb,
+                visual_source=visual_source,  # type: ignore[arg-type]
                 confidence=round(float(med.confidence), 3),
                 needs_review=needs_review,
                 highlight_color=highlight,  # type: ignore[arg-type]
@@ -662,6 +930,7 @@ def _seed_demo_profile(db: Session, reset: bool = False) -> Profile:
 async def lifespan(_app: FastAPI):
     init_db()
     with SessionLocal() as db:
+        _seed_medicine_catalog(db)
         _seed_demo_profile(db, reset=False)
     yield
 
@@ -745,7 +1014,7 @@ def seed_demo_endpoint(
 
 
 @app.get("/scan/demo", response_model=ScanResponse, tags=["Caregiver Mode"])
-def get_demo_scan() -> ScanResponse:
+def get_demo_scan(db: Session = Depends(get_db)) -> ScanResponse:
     """Return a realistic Indian prescription extraction without uploading a file."""
     extraction = PrescriptionExtractionOutput.model_validate(DEMO_PRESCRIPTION_PAYLOAD)
     return _enrich_extraction(
@@ -753,6 +1022,7 @@ def get_demo_scan() -> ScanResponse:
         source="demo_fallback",
         model_used="demo-payload",
         uploaded_thumbnail=None,
+        db=db,
     )
 
 
@@ -766,11 +1036,22 @@ async def scan_prescription(
         default=False,
         description="Set true to return the realistic demo prescription payload immediately.",
     ),
+    share_code: str | None = Form(
+        default=None,
+        description="Optional share_code to run patient allergy cross-checks during scanning.",
+    ),
+    db: Session = Depends(get_db),
 ) -> ScanResponse:
     """Extract medicines from a prescription or blister strip via Gemini Vision + deterministic rules."""
     uploaded_thumbnail: str | None = None
     image_bytes: bytes | None = None
     mime_type = "image/jpeg"
+
+    known_allergies: list[str] | None = None
+    if share_code and share_code.strip():
+        prof = db.scalar(select(Profile).where(Profile.share_code == share_code.strip().upper()))
+        if prof and prof.known_allergies:
+            known_allergies = list(prof.known_allergies)
 
     if file is not None:
         image_bytes = await file.read()
@@ -805,6 +1086,8 @@ async def scan_prescription(
             model_used="demo-fallback",
             uploaded_thumbnail=uploaded_thumbnail,
             extra_warnings=[reason],
+            db=db,
+            known_allergies=known_allergies,
         )
 
     try:
@@ -819,6 +1102,8 @@ async def scan_prescription(
             model_used=model_used,
             uploaded_thumbnail=uploaded_thumbnail,
             extra_warnings=fallback_warnings,
+            db=db,
+            known_allergies=known_allergies,
         )
     except Exception as exc:
         logger.exception("Gemini Vision extraction failed; falling back to demo payload")
@@ -831,6 +1116,8 @@ async def scan_prescription(
             extra_warnings=[
                 f"Live Gemini Vision call failed ({type(exc).__name__}); returned demo fallback payload."
             ],
+            db=db,
+            known_allergies=known_allergies,
         )
 
 
@@ -967,7 +1254,9 @@ def get_profile(share_code: str, db: Session = Depends(get_db)) -> ProfileRespon
 
 
 def _recompute_profile_safety_flags(db: Session, profile_id: int) -> list[SafetyFlag]:
-    """Re-evaluate deterministic safety flags across all active medicines of a profile."""
+    """Re-evaluate deterministic safety & allergy flags across all active medicines of a profile."""
+    profile = db.get(Profile, profile_id)
+    known_allergies = list(profile.known_allergies or []) if profile else None
     all_active = list(
         db.scalars(
             select(Medicine)
@@ -987,7 +1276,10 @@ def _recompute_profile_safety_flags(db: Session, profile_id: int) -> list[Safety
         }
         for m in all_active
     ]
-    per_med_flags, regimen_flags = evaluate_medicine_safety(safety_inputs)
+    per_med_flags, regimen_flags = evaluate_medicine_safety(
+        safety_inputs,
+        known_allergies=known_allergies,
+    )
     for idx, med in enumerate(all_active):
         med.safety_flags = [f.model_dump() for f in per_med_flags.get(idx, [])]
     return regimen_flags
@@ -1046,10 +1338,24 @@ def confirm_medicines(
             as_needed=as_needed,
         )
 
+        color_tag = item.pill_color_tag or pick_pill_color_tag(slots, as_needed)
+        resolved_thumb = item.strip_thumbnail
+        resolved_generic = item.generic_name.strip() if item.generic_name else None
+        if not resolved_thumb:
+            resolved_thumb, _, resolved_generic = _resolve_medicine_visual(
+                db=db,
+                brand_name=item.brand_name.strip(),
+                generic_name=resolved_generic,
+                strength=item.strength.strip() if item.strength else None,
+                dosage_form=item.dosage_form,
+                fallback_accent=color_tag,
+                source_type="prescription",
+            )
+
         med = Medicine(
             profile_id=profile.id,
             brand_name=item.brand_name.strip(),
-            generic_name=item.generic_name.strip() if item.generic_name else None,
+            generic_name=resolved_generic,
             strength=item.strength.strip() if item.strength else None,
             dosage_form=item.dosage_form,
             dosage_pattern=normalized_pattern,
@@ -1060,8 +1366,8 @@ def confirm_medicines(
             instructions_en=item.instructions_en or generated_scripts["en"],
             instructions_hi=item.instructions_hi or generated_scripts["hi"],
             instructions_mr=item.instructions_mr or generated_scripts["mr"],
-            strip_thumbnail=item.strip_thumbnail or DEMO_THUMBNAILS.get(item.brand_name.strip()),
-            pill_color_tag=item.pill_color_tag or pick_pill_color_tag(slots, as_needed),
+            strip_thumbnail=resolved_thumb,
+            pill_color_tag=color_tag,
             confidence=item.confidence,
             needs_review=False,
             safety_flags=[],
@@ -1070,6 +1376,7 @@ def confirm_medicines(
             prescribed_by=item.prescribed_by or payload.prescribed_by,
         )
         db.add(med)
+        _upsert_catalog_on_confirm(db, med)
         new_models.append(med)
 
     db.flush()
@@ -1590,6 +1897,25 @@ def get_daily_summary(
                 seen_flag_keys.add(dedupe_key)
                 active_safety_flags.append(flag)
 
+    # Collect refill alerts for active medicines nearing course end
+    active_med_rows = list(
+        db.scalars(
+            select(Medicine)
+            .where(and_(Medicine.profile_id == profile.id, Medicine.is_active.is_(True)))
+            .order_by(Medicine.id.asc())
+        )
+    )
+    refill_alerts: list[str] = []
+    for med_row in active_med_rows:
+        _, _, refill_status, msg_en, _, _ = compute_refill_status(
+            brand_name=med_row.brand_name,
+            created_at=med_row.created_at,
+            duration_days=med_row.duration_days,
+            today_ist=target_date,
+        )
+        if refill_status in ("refill_soon", "completed"):
+            refill_alerts.append(msg_en)
+
     whatsapp_message, whatsapp_url = build_whatsapp_summary(
         elder_name=profile.elder_name,
         share_code=profile.share_code,
@@ -1604,6 +1930,7 @@ def get_daily_summary(
         abnormal_vital_flags=abnormal_flags,
         active_safety_flags=active_safety_flags,
         caregiver_phone=phone,
+        refill_alerts=refill_alerts,
     )
 
     return DailySummaryResponse(
@@ -1624,8 +1951,431 @@ def get_daily_summary(
         latest_vital=latest_vital,
         abnormal_vital_flags=abnormal_flags,
         active_safety_flags=active_safety_flags,
+        refill_alerts=refill_alerts,
         whatsapp_message=whatsapp_message,
         whatsapp_url=whatsapp_url,
+    )
+
+
+# =============================================================================
+# 8. Medicine Visual Catalog, Refill Tracker, Strip Verifier & Trends APIs
+# =============================================================================
+
+
+@app.get(
+    "/catalog/search",
+    response_model=list[CatalogEntryResponse],
+    tags=["Medicine Catalog"],
+)
+def search_medicine_catalog(
+    q: str = Query(default="", max_length=120, description="Search brand, alias, or generic name."),
+    limit: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+) -> list[CatalogEntryResponse]:
+    """Zero-token instant search over the local Indian medicine visual catalog."""
+    entries = list(db.scalars(select(MedicineCatalog).order_by(MedicineCatalog.brand_name.asc())))
+    query = q.strip().lower()
+    norm_q = normalize_medicine_key(query)
+    if not query:
+        return [_serialize_catalog_entry(e) for e in entries[:limit]]
+
+    matches: list[MedicineCatalog] = []
+    for entry in entries:
+        haystack = " ".join(
+            [
+                entry.brand_name.lower(),
+                entry.normalized_key,
+                (entry.generic_name or "").lower(),
+                (entry.therapeutic_class or "").lower(),
+                " ".join(a.lower() for a in (entry.aliases or [])),
+            ]
+        )
+        if query in haystack or (norm_q and norm_q in entry.normalized_key):
+            matches.append(entry)
+            if len(matches) >= limit:
+                break
+    return [_serialize_catalog_entry(e) for e in matches]
+
+
+@app.post(
+    "/catalog/lookup",
+    response_model=CatalogLookupResponse,
+    tags=["Medicine Catalog"],
+)
+def lookup_medicine_visual(
+    payload: CatalogLookupRequest,
+    db: Session = Depends(get_db),
+) -> CatalogLookupResponse:
+    """Resolve a medicine's visual vector & generic info via DB cache -> micro-AI -> generic fallback."""
+    existing = _find_catalog_entry(db, payload.query)
+    if existing is not None:
+        return CatalogLookupResponse(
+            found=True,
+            cache_hit=True,
+            visual_source="catalog_verified",
+            entry=_serialize_catalog_entry(
+                existing,
+                display_brand=payload.query.strip(),
+                strength=payload.strength,
+            ),
+        )
+
+    api_key = _get_gemini_api_key()
+    if payload.allow_ai and api_key:
+        try:
+            generic_name, therapeutic_class, spec = _call_gemini_catalog_lookup(
+                query=payload.query.strip(),
+                dosage_form=payload.dosage_form,
+                api_key=api_key,
+            )
+            key = base_brand_root(payload.query) or normalize_medicine_key(payload.query)
+            new_entry = MedicineCatalog(
+                normalized_key=key or f"med{int(datetime.now(timezone.utc).timestamp())}",
+                brand_name=payload.query.strip(),
+                aliases=[payload.query.strip().lower()],
+                generic_name=generic_name,
+                therapeutic_class=therapeutic_class,
+                dosage_form=payload.dosage_form,
+                visual_spec=spec.model_dump(),
+                source="ai_learned",
+            )
+            db.add(new_entry)
+            db.commit()
+            db.refresh(new_entry)
+            return CatalogLookupResponse(
+                found=True,
+                cache_hit=False,
+                visual_source="ai_inferred",
+                entry=_serialize_catalog_entry(
+                    new_entry,
+                    display_brand=payload.query.strip(),
+                    strength=payload.strength,
+                ),
+            )
+        except Exception:
+            logger.warning("Catalog micro-AI lookup fell back to deterministic vector")
+
+    fallback_spec_dict = default_visual_spec_for_form(payload.dosage_form)
+    fallback_spec = VisualSpec.model_validate(fallback_spec_dict)
+    thumb = render_medicine_svg(
+        brand_name=payload.query.strip(),
+        strength=payload.strength,
+        visual_spec=fallback_spec_dict,
+        dosage_form=payload.dosage_form,
+    )
+    return CatalogLookupResponse(
+        found=False,
+        cache_hit=False,
+        visual_source="generic_fallback",
+        entry=CatalogEntryResponse(
+            id=None,
+            normalized_key=normalize_medicine_key(payload.query),
+            brand_name=payload.query.strip(),
+            aliases=[],
+            generic_name=None,
+            therapeutic_class=None,
+            dosage_form=payload.dosage_form,
+            visual_spec=fallback_spec,
+            strip_thumbnail=thumb,
+            source="generic_fallback",
+        ),
+    )
+
+
+@app.get(
+    "/profile/{share_code}/refills",
+    response_model=RefillsResponse,
+    tags=["Vitals & Family Loop"],
+)
+def get_profile_refills(
+    share_code: str,
+    db: Session = Depends(get_db),
+) -> RefillsResponse:
+    """Compute remaining course days and refill alerts for all active medicines (0 AI tokens)."""
+    profile = _get_profile_or_404(db, share_code)
+    today_ist = get_ist_today()
+    active_meds = list(
+        db.scalars(
+            select(Medicine)
+            .where(and_(Medicine.profile_id == profile.id, Medicine.is_active.is_(True)))
+            .order_by(Medicine.id.asc())
+        )
+    )
+    items: list[RefillItem] = []
+    for med in active_meds:
+        elapsed, remaining, status_val, msg_en, msg_hi, msg_mr = compute_refill_status(
+            brand_name=med.brand_name,
+            created_at=med.created_at,
+            duration_days=med.duration_days,
+            today_ist=today_ist,
+        )
+        items.append(
+            RefillItem(
+                medicine_id=med.id,
+                brand_name=med.brand_name,
+                strength=med.strength,
+                duration_days=med.duration_days,
+                days_elapsed=elapsed,
+                days_remaining=remaining,
+                status=status_val,  # type: ignore[arg-type]
+                message_en=msg_en,
+                message_hi=msg_hi,
+                message_mr=msg_mr,
+            )
+        )
+
+    items.sort(key=lambda i: (9999 if i.days_remaining is None else i.days_remaining, i.medicine_id))
+    return RefillsResponse(
+        share_code=profile.share_code,
+        elder_name=profile.elder_name,
+        as_of_date=today_ist,
+        refill_soon_count=sum(1 for i in items if i.status == "refill_soon"),
+        completed_count=sum(1 for i in items if i.status == "completed"),
+        items=items,
+    )
+
+
+@app.post(
+    "/scan/verify-strip",
+    response_model=StripVerifyResponse,
+    tags=["Nani Mode"],
+)
+async def verify_medicine_strip(
+    share_code: str = Form(default=DEFAULT_SHARE_CODE),
+    file: UploadFile | None = File(default=None),
+    demo: bool = Form(default=False),
+    db: Session = Depends(get_db),
+) -> StripVerifyResponse:
+    """'Is this the right pill?' — matches a photographed blister strip against active verified medicines."""
+    profile = _get_profile_or_404(db, share_code)
+    active_meds = list(
+        db.scalars(
+            select(Medicine)
+            .where(and_(Medicine.profile_id == profile.id, Medicine.is_active.is_(True)))
+            .order_by(Medicine.id.asc())
+        )
+    )
+
+    image_bytes: bytes | None = None
+    mime_type = "image/jpeg"
+    if file is not None:
+        image_bytes = await file.read()
+        if not image_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded image file is empty.",
+            )
+        if len(image_bytes) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Image exceeds 12 MB limit.",
+            )
+        _, mime_type = _create_thumbnail_data_uri(image_bytes)
+
+    api_key = _get_gemini_api_key()
+    if demo or image_bytes is None or api_key is None:
+        extraction = PrescriptionExtractionOutput.model_validate(DEMO_PRESCRIPTION_PAYLOAD)
+    else:
+        try:
+            extraction, _, _ = _call_gemini_vision_with_fallback(
+                image_bytes=image_bytes,
+                mime_type=mime_type,
+                api_key=api_key,
+            )
+        except Exception:
+            logger.exception("Strip verification Gemini call failed; falling back to demo payload")
+            extraction = PrescriptionExtractionOutput.model_validate(DEMO_PRESCRIPTION_PAYLOAD)
+
+    if not extraction.medicines:
+        return StripVerifyResponse(
+            share_code=profile.share_code,
+            matched=False,
+            confidence=0.0,
+            spoken_en="Sorry Nani, I could not read the medicine name clearly. Please ask your caregiver.",
+            spoken_hi="माफ़ कीजिए नानी जी, दवाई का नाम साफ़ नहीं दिखा। कृपया देखभालकर्ता से पूछें।",
+            spoken_mr="माफ करा आजी, औषधाचे नाव स्पष्ट दिसले नाही. कृपया काळजीवाहकाला विचारा.",
+            warning="No readable medicine detected in the uploaded image.",
+        )
+
+    detected = extraction.medicines[0]
+    det_key = normalize_medicine_key(detected.brand_name)
+    det_root = base_brand_root(detected.brand_name)
+    det_gen = normalize_medicine_key(detected.generic_name or "")
+
+    best_match: Medicine | None = None
+    for med in active_meds:
+        m_key = normalize_medicine_key(med.brand_name)
+        m_root = base_brand_root(med.brand_name)
+        m_gen = normalize_medicine_key(med.generic_name or "")
+        if (
+            (det_key and det_key == m_key)
+            or (det_root and m_root and det_root == m_root)
+            or (det_gen and m_gen and det_gen == m_gen)
+        ):
+            best_match = med
+            break
+
+    if best_match is not None:
+        slots = [ScheduleSlot.model_validate(s) for s in (best_match.schedule_slots or [])]
+        slot_en = ", ".join(f"{s.label_en} ({s.time})" for s in slots) or "as advised"
+        slot_hi = ", ".join(s.label_hi for s in slots) or "डॉक्टर की सलाह अनुसार"
+        slot_mr = ", ".join(s.label_mr for s in slots) or "डॉक्टरांच्या सल्ल्यानुसार"
+        return StripVerifyResponse(
+            share_code=profile.share_code,
+            matched=True,
+            confidence=round(float(detected.confidence), 3),
+            detected_brand=detected.brand_name,
+            detected_strength=detected.strength,
+            matched_medicine=_serialize_medicine(best_match),
+            next_slot_label=slot_en,
+            spoken_en=(
+                f"Yes {profile.elder_name}, this is your verified medicine {best_match.brand_name} "
+                f"{best_match.strength or ''}. Scheduled for: {slot_en}."
+            ).replace("  ", " "),
+            spoken_hi=(
+                f"हाँ {profile.elder_name}, यह आपकी सत्यापित दवाई {best_match.brand_name} है। "
+                f"इसे {slot_hi} लेना है।"
+            ),
+            spoken_mr=(
+                f"होय {profile.elder_name}, हे तुमचे प्रमाणित औषध {best_match.brand_name} आहे. "
+                f"हे {slot_mr} घ्यायचे आहे."
+            ),
+        )
+
+    return StripVerifyResponse(
+        share_code=profile.share_code,
+        matched=False,
+        confidence=round(float(detected.confidence), 3),
+        detected_brand=detected.brand_name,
+        detected_strength=detected.strength,
+        spoken_en=(
+            f"Stop {profile.elder_name}! {detected.brand_name} is NOT in your active verified schedule. "
+            "Please check with your caregiver before taking it."
+        ),
+        spoken_hi=(
+            f"रुकिए {profile.elder_name}! {detected.brand_name} आपकी आज की सत्यापित सूची में नहीं है। "
+            "इसे लेने से पहले देखभालकर्ता से ज़रूर पूछें।"
+        ),
+        spoken_mr=(
+            f"थांबा {profile.elder_name}! {detected.brand_name} तुमच्या आजच्या प्रमाणित यादीत नाही. "
+            "घेण्यापूर्वी कृपया काळजीवाहकाला विचारा."
+        ),
+        warning=f"'{detected.brand_name}' is not in {profile.share_code}'s active verified medicines.",
+    )
+
+
+@app.get(
+    "/profile/{share_code}/trends",
+    response_model=TrendsResponse,
+    tags=["Vitals & Family Loop"],
+)
+def get_profile_trends(
+    share_code: str,
+    days: int = Query(default=7, ge=1, le=30),
+    db: Session = Depends(get_db),
+) -> TrendsResponse:
+    """Return multi-day medication adherence & vitals trend analytics (0 AI tokens)."""
+    profile = _get_profile_or_404(db, share_code)
+    today_ist = get_ist_today()
+    start_date = today_ist - timedelta(days=days - 1)
+
+    active_meds = list(
+        db.scalars(
+            select(Medicine).where(
+                and_(
+                    Medicine.profile_id == profile.id,
+                    Medicine.is_active.is_(True),
+                    Medicine.as_needed.is_(False),
+                )
+            )
+        )
+    )
+    scheduled_per_day = sum(len(m.schedule_slots or []) for m in active_meds)
+
+    logs = list(
+        db.scalars(
+            select(DoseLog).where(
+                and_(
+                    DoseLog.profile_id == profile.id,
+                    DoseLog.dose_date >= start_date,
+                    DoseLog.dose_date <= today_ist,
+                    DoseLog.status == "taken",
+                )
+            )
+        )
+    )
+    taken_by_date: dict[date, int] = {}
+    for log in logs:
+        taken_by_date[log.dose_date] = taken_by_date.get(log.dose_date, 0) + 1
+
+    daily_points: list[DailyAdherencePoint] = []
+    for offset in range(days):
+        d = start_date + timedelta(days=offset)
+        taken = taken_by_date.get(d, 0)
+        pct = round(min(100.0, (taken / scheduled_per_day) * 100.0), 1) if scheduled_per_day > 0 else 100.0
+        daily_points.append(
+            DailyAdherencePoint(
+                date=d,
+                taken=taken,
+                total=scheduled_per_day,
+                adherence_percent=pct,
+            )
+        )
+
+    avg_pct = (
+        round(sum(p.adherence_percent for p in daily_points) / len(daily_points), 1)
+        if daily_points
+        else 0.0
+    )
+
+    cutoff_utc = datetime.now(timezone.utc) - timedelta(days=days)
+    vital_rows = list(
+        db.scalars(
+            select(VitalLog)
+            .where(
+                and_(
+                    VitalLog.profile_id == profile.id,
+                    VitalLog.recorded_at >= cutoff_utc,
+                )
+            )
+            .order_by(VitalLog.recorded_at.asc())
+        )
+    )
+
+    def _compute_direction(values: list[float], threshold: float) -> str:
+        if len(values) < 2:
+            return "insufficient_data"
+        delta = values[-1] - values[0]
+        if delta >= threshold:
+            return "rising"
+        if delta <= -threshold:
+            return "falling"
+        return "stable"
+
+    systolics = [float(v.systolic_mmhg) for v in vital_rows if v.systolic_mmhg is not None]
+    temps = [float(v.temperature_f) for v in vital_rows if v.temperature_f is not None]
+    weights = [float(v.weight_kg) for v in vital_rows if v.weight_kg is not None]
+    latest_v = vital_rows[-1] if vital_rows else None
+
+    vitals_trend = VitalsTrendSummary(
+        readings_count=len(vital_rows),
+        latest_temperature_f=latest_v.temperature_f if latest_v else None,
+        latest_systolic_mmhg=latest_v.systolic_mmhg if latest_v else None,
+        latest_diastolic_mmhg=latest_v.diastolic_mmhg if latest_v else None,
+        latest_weight_kg=latest_v.weight_kg if latest_v else None,
+        systolic_trend=_compute_direction(systolics, 8.0),  # type: ignore[arg-type]
+        temperature_trend=_compute_direction(temps, 0.8),  # type: ignore[arg-type]
+        weight_delta_kg=round(weights[-1] - weights[0], 2) if len(weights) >= 2 else None,
+        critical_events_count=sum(1 for v in vital_rows if v.overall_status == "critical"),
+    )
+
+    return TrendsResponse(
+        share_code=profile.share_code,
+        elder_name=profile.elder_name,
+        days=days,
+        average_adherence_percent=avg_pct,
+        daily_adherence=daily_points,
+        vitals_trend=vitals_trend,
     )
 
 

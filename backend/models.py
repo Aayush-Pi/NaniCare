@@ -227,3 +227,33 @@ class VitalLog(Base):
     )
 
     profile: Mapped[Profile] = relationship("Profile", back_populates="vitals_logs")
+
+
+class MedicineCatalog(Base):
+    """Compact Indian medicine visual & generic reference catalog (zero-token cache)."""
+
+    __tablename__ = "medicine_catalog"
+    __table_args__ = (Index("idx_medicine_catalog_key", "normalized_key"),)
+
+    id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    normalized_key: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    brand_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    aliases: Mapped[list[str]] = mapped_column(JSON_COL, nullable=False, default=list)
+    generic_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    therapeutic_class: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    dosage_form: Mapped[str] = mapped_column(String(48), nullable=False, default="tablet")
+    visual_spec: Mapped[dict[str, Any]] = mapped_column(JSON_COL, nullable=False, default=dict)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="seed_catalog")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        onupdate=_utcnow,
+        server_default=func.now(),
+    )

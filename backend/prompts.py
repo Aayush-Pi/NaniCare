@@ -42,6 +42,7 @@ Your job is to inspect an uploaded photo (handwritten Indian doctor prescription
 - Whenever `confidence < 0.80`, list every uncertain field in `low_confidence_fields` (chosen from: `brand_name`, `strength`, `dosage_pattern`, `meal_relation`, `duration_days`).
 - Populate `warnings` if the photo has glare, motion blur, folded paper, or cut-off edges.
 - Keep `raw_line_text` faithful to what is visually written on the page or strip.
+- Optional visual hint (token-efficient): if the pill/strip appearance is visible in the photo or is a well-known Indian brand, populate `pill_shape` (`round`, `oval`, `oblong`, `capsule_bicolor`, `bottle`, `dropper`, `inhaler`, `tube`, `vial`), `pill_color_hex`, `pill_secondary_color_hex`, and `strip_accent_hex` (6-digit `#RRGGBB`); otherwise leave them `null`.
 """
 
 

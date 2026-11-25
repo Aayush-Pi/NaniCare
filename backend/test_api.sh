@@ -163,8 +163,29 @@ echo "[13/14] DELETE /vitals/${VITAL_ID} (remove disposable test vital)"
 curl -fsS -X DELETE "${BASE_URL}/vitals/${VITAL_ID}" | pp
 
 echo ""
-echo "[14/14] GET /profiles & DELETE /profile/NANI99/medicines (list profiles & flush test schedule)"
+echo "[14/18] GET /profiles & DELETE /profile/NANI99/medicines (list profiles & flush test schedule)"
 curl -fsS "${BASE_URL}/profiles" | pp
 curl -fsS -X DELETE "${BASE_URL}/profile/NANI99/medicines" | pp
+
 echo ""
-echo "All 14 NaniCare backend smoke tests PASSED!"
+echo "[15/18] GET /catalog/search?q=dolo & POST /catalog/lookup (zero-token Indian medicine visual catalog)"
+curl -fsS "${BASE_URL}/catalog/search?q=dolo&limit=3" | pp
+curl -fsS -X POST "${BASE_URL}/catalog/lookup" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Pan-D", "dosage_form": "capsule", "allow_ai": false}' | pp
+
+echo ""
+echo "[16/18] GET /profile/DEMO01/refills (refill & course-end tracker)"
+curl -fsS "${BASE_URL}/profile/DEMO01/refills" | pp
+
+echo ""
+echo "[17/18] POST /scan/verify-strip (demo strip verification on DEMO01)"
+curl -fsS -X POST "${BASE_URL}/scan/verify-strip" \
+  -F "share_code=DEMO01" \
+  -F "demo=true" | pp
+
+echo ""
+echo "[18/18] GET /profile/DEMO01/trends?days=7 (7-day adherence & vitals analytics)"
+curl -fsS "${BASE_URL}/profile/DEMO01/trends?days=7" | pp
+echo ""
+echo "All 18 NaniCare backend smoke tests PASSED!"
