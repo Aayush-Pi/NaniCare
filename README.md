@@ -5,7 +5,7 @@
 **Live App:** [https://nani-care.vercel.app](https://nani-care.vercel.app/) *(Demo Share Code: `DEMO01`)* · **Backend API Docs:** [https://nanicare.onrender.com/docs](https://nanicare.onrender.com/docs)
 
 **Jump to:**
-[Why NaniCare Is Needed](#why-nanicare-is-needed) · [How It Works](#how-it-works) · [Key Features](#key-features) · [Project Structure](#project-structure) · [Quick Start](#run-locally) · [API Reference](#backend-api-endpoints) · [Testing](#testing--verification) · [Deployment](#deployment--ci)
+[Why NaniCare Is Needed](#why-nanicare-is-needed) · [How It Works](#how-it-works) · [Key Features](#key-features) · [Assumptions & Scope](#assumptions--scope) · [Project Structure](#project-structure) · [Quick Start](#run-locally) · [API Reference](#backend-api-endpoints) · [Testing](#testing--verification) · [Deployment](#deployment--ci)
 
 > **Clinical Disclaimer:** NaniCare is a medication organization, visual identification, and adherence tool. It does not replace a licensed clinician's judgment. Always confirm extracted details against the original prescription and follow your doctor's instructions.
 
@@ -75,6 +75,19 @@ Millions of older adults manage complex daily pill regimens alone — often with
 - **WCAG-Compliant SVG Charts ([VitalsCharts.tsx](frontend/src/components/VitalsCharts.tsx)):** Interactive-width line charts for **Blood Pressure**, **Temperature** (with shaded normal range), **Weight**, and a **7-day Adherence** bar chart (`GET /profile/{share_code}/trends`) — with distinct line patterns/shapes and full screen-reader `<table>` alternatives.
 - **Clinical Vital Alerts & Refills:** Flags fever, hypothermia, hypertension stages, rapid weight shifts (`+2.0 kg / 7d` or `-2.5 kg / 14d`), and low weight, alongside course-completion alerts (`GET /profile/{share_code}/refills`).
 - **Mobile-First Navigation ([TopBar.tsx](frontend/src/components/TopBar.tsx) & [VitalsLogger.tsx](frontend/src/components/VitalsLogger.tsx)):** Sticky safe-area mobile bottom navigation (`< 768px`) and stacked mobile vitals cards.
+
+---
+
+## Assumptions & Scope
+
+To keep the hackathon build focused, reliable, and safe for families, NaniCare makes the following explicit design assumptions:
+
+1. **Trusted-Family Share Code (Zero-Auth Elder Access):** Profiles use a 6-character `share_code` (e.g. `DEMO01`) with no passwords or OTPs so older adults can open their schedule in one tap. This assumes share codes are kept within a trusted family circle and is not intended as a multi-tenant clinical EHR without adding authentication.
+2. **Human-in-the-Loop Caregiver Verification:** AI extraction is never treated as ground truth. The app assumes a caregiver reviews every scanned item (especially amber `Medium`/`Low` confidence and red interaction/allergy flags) before confirming it into Grandparents Mode.
+3. **Indian Meal Windows & IST Timezone:** All dose dates, adherence resets, and default slot times assume **IST (`Asia/Kolkata`)** and typical Indian meal routines (`empty_stomach: 07:00`, `morning: 07:30/08:30`, `afternoon: 13:00/14:00`, `evening: 17:30`, `night: 20:00/21:00`), with deterministic drug-timing defaults (e.g. Levothyroxine/PPIs on an empty stomach, Statins at night).
+4. **Generic Visual Catalog vs. Manufacturer Variance:** The 60-entry [indian_medicines_catalog.json](backend/data/indian_medicines_catalog.json) provides generic pill size, color, shape, and strip accents. Because pharmaceutical packaging can vary by batch or manufacturer, caregivers can snap/upload an actual strip photo to override any vector illustration.
+5. **General Geriatric Vitals Thresholds:** Deterministic vitals flags (fever, BP stages, rapid weight changes) and drug-class cross-checks reflect general adult outpatient thresholds — not patient-specific targets (e.g. renal, pediatric, or pregnancy care).
+6. **Browser & Connectivity Capabilities:** Hands-free **Talk** voice commands use Web Speech Recognition (supported in Chrome, Edge, and Safari over HTTPS/`localhost`), neural MP3 voiceovers use `edge-tts` via FastAPI (falling back to browser `speechSynthesis`), and camera pill-strip verification (`POST /scan/verify-strip`) requires the FastAPI backend (`VITE_API_URL`). When live Gemini Vision hits temporary `503`/`429` limits, `POST /scan` gracefully falls back to a sample payload with an explicit scanner warning.
 
 ---
 
