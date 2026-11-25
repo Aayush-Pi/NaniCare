@@ -1,45 +1,78 @@
 # NaniCare
 
-**NaniCare** is a voice-first, WCAG-accessible medication safety, prescription verification, and vitals companion built for Indian families. Caregivers can scan printed or handwritten prescriptions and medicine blister strips, review AI-extracted confidence flags and clinical interaction alerts, and publish verified regimens. Older adults get an **Apple iOS 17 Assistive Access–style** interface accessed via a simple 6-character share code (`DEMO01` out of the box), featuring oversized tiles, non-textual visual cues, green dose-confirmation buttons, camera strip verification, and natural Indian-accented voice instructions in **English, Hindi, and Marathi**.
+> **A voice-first, Assistive Access–inspired medication safety companion for older adults — paired with an AI prescription verification gate and vitals dashboard for their families.**
 
-> **Disclaimer:** NaniCare is a medication organization, visual identification, and reminder tool. It does not replace a licensed clinician's judgment. Always verify extracted details against the original prescription and follow your doctor's advice.
+**Jump to:**
+[Why NaniCare Is Needed](#why-nanicare-is-needed) · [How It Works](#how-it-works) · [Key Features](#key-features) · [Project Structure](#project-structure) · [Quick Start](#run-locally) · [API Reference](#backend-api-endpoints) · [Testing](#testing--verification) · [Deployment](#deployment--ci)
+
+> **Clinical Disclaimer:** NaniCare is a medication organization, visual identification, and adherence tool. It does not replace a licensed clinician's judgment. Always confirm extracted details against the original prescription and follow your doctor's instructions.
+
+---
+
+## Why NaniCare Is Needed
+
+Millions of older adults manage complex daily pill regimens alone — often with declining eyesight, memory lapses, look-alike foil strips, and tiny English labels printed on prescriptions they cannot read.
+
+| The Problem in Numbers | Source |
+| :--- | :--- |
+| **~50% adherence globally:** Only half of patients with chronic illnesses take medicines as prescribed — and rates drop lower in developing nations. | World Health Organization (WHO), *Adherence to Long-Term Therapies* |
+| **75% chronic burden in India:** Around **3 in 4** older Indians live with at least one chronic condition, and **over 33%** in urban cohorts juggle polypharmacy (5+ daily medicines). | *Longitudinal Ageing Study in India (LASI Wave-1)* & PIB / NIH studies |
+| **8.5% living alone:** Rapid urbanization and nuclear families leave roughly **1 in 12** older Indians ageing solo without daily bedside help to sort morning vs. night pills. | *LASI* secondary demographic analyses |
+| **600,000+ ER visits & ~100,000 hospitalizations/year (65+):** Older adults are **~7× more likely** to be hospitalized after an adverse drug event than younger adults — roughly **two-thirds** caused by unintentional dosing errors. | U.S. Centers for Disease Control and Prevention (CDC, NEISS-CADES) |
+
+**The real gap:** Caregiver apps give charts to young adults, while senior citizens are handed cluttered, tiny-font dashboards — or raw AI chatbots that can hallucinate dosages. **NaniCare bridges both sides:** AI accelerates data entry for the family caregiver, a **human verification gate** blocks unsafe guesses, and the grandparent gets a calm, big-tile visual & voice companion in **Hindi, Marathi, or English**.
+
+---
+
+## How It Works
+
+```text
+  [1. Family Caregiver]           [2. Verification Gate]           [3. Older Adult (Assistive Mode)]
+  Upload Rx / pill strip  ──▶  AI rates confidence + flags    ──▶  Unlocks ONLY verified pills via 6-char
+  via Gemini Vision             Yellow (unclear) / Red (allergy)   Share Code (e.g. DEMO01)
+                                          │
+                                          ▼
+  [4. Daily Family Loop] ◀── Tap green "I Took It" / Speak / Camera Check ◀── Visual strip + Pill size/color TTS
+  Vitals SVG Graphs, Refill Alerts & 1-Tap WhatsApp Daily Summary
+```
+
+1. **Scan & Flag ([Caregiver Mode](frontend/src/pages/caregiver/index.tsx)):** A family member snaps a prescription or blister strip (`POST /scan`). [backend/engine.py](backend/engine.py) extracts medicines and runs [backend/scheduler.py](backend/scheduler.py) to flag handwritten ambiguities in **amber** and allergy/drug conflicts in **red**.
+2. **Verify & Publish ([ReviewMedicineCard.tsx](frontend/src/components/ReviewMedicineCard.tsx)):** Unverified drafts are strictly blocked from the elder's phone. Once the caregiver confirms each medicine, NaniCare generates IST dosage slots, **0-token SVG strip previews** ([backend/visuals.py](backend/visuals.py)), and spoken EN/HI/MR scripts describing **pill size, color, shape, and strip color**.
+3. **Guided Elder Routine ([Grandparents Mode](frontend/src/pages/nani/index.tsx)):** Modeled after **Apple iOS 17 Assistive Access**, the elder enters a 6-character code (`DEMO01`) and sees distraction-free big tiles (`Medicines Now`, `Today's List`, `Hear Medicines`, `Check My Pill`, `Talk`, `Call Family`). They can listen in their native language, match pills by camera (`POST /scan/verify-strip`), or tap the big green **"I Took It"** button.
+4. **Monitor & Share ([Vitals & Refills](frontend/src/pages/vitals/index.tsx)):** Every dose and vital reading updates live **Blood Pressure, Temperature, Weight, and 7-day Adherence** graphs ([VitalsCharts.tsx](frontend/src/components/VitalsCharts.tsx)), triggers refill countdowns, and builds a 1-tap **WhatsApp Daily Family Report** (`GET /profile/{share_code}/summary`).
 
 ---
 
 ## Key Features
 
 ### 1. Grandparents Mode (iOS 17 Assistive Access–Inspired UX)
-- **Zero-Login Share Code Access:** Connects directly via a 6-character family code (e.g., `DEMO01` for Kamla Sharma) with no passwords or OTPs.
-- **Distraction-Free Full-Screen Chrome:** Hides navigation bars and footers when Grandparents Mode is active so elders see only large high-contrast tiles and a single prominent **Back** button (`Escape` supported).
+- **Zero-Login Share Code Access:** Connects directly via a 6-character family code (default `DEMO01` for Kamla Sharma) — no passwords, emails, or OTPs.
+- **Distraction-Free Full-Screen Chrome:** Hides navigation bars and footers inside [App.tsx](frontend/src/App.tsx) when Grandparents Mode is active, leaving only oversized tiles and one prominent **Back** button (`Escape` supported).
 - **One Task Per Screen:**
-  - **Medicines Now:** Steps through the current time slot's medicines one focused card at a time with progress dots and Next/Back controls.
-  - **Today's List:** Full scrollable checklist grouped by **Morning**, **Afternoon**, and **Night** with strip thumbnails and instant toggle buttons.
-  - **Hear Medicines / Stop:** Speaks verified schedules aloud with pre-warmed neural audio caching.
-  - **Check My Pill (Camera):** Snaps or uploads a blister strip photo (`POST /scan/verify-strip`) for an immediate green **YES** / red **STOP** safety match with spoken feedback.
-  - **Talk (Hands-Free Voice Commands):** Uses browser Speech Recognition (`en-IN`, `hi-IN`, `mr-IN`) so elders can say *"Morning"*, *"Night"*, *"Taken"*, *"Help"*, or regional equivalents (`सुबह`, `रात`, `लिया`, `मदद`, `सकाळ`, `रात्र`, `घेतले`, `मदत`).
-  - **Call Family:** One-tap `tel:` phone dialer and pre-filled WhatsApp emergency SOS link.
-  - **Settings:** Root `rem` text scaling (`A` / `A` / `A`), **AAA High Contrast** toggle (4px black/white borders), **Grid vs. Rows** home layout switch, language selector (`English` / `हिन्दी` / `मराठी`), and Share Code switcher.
-- **Non-Textual Visual Cues:** Sunrise / Sun / Moon icons for time of day, pill-before-plate / plate-before-pill pictograms for meal timing (`Before Food`, `After Food`, `With Food`), tablet-count pill icons, completion dot tracker, and unmistakable **green "I Took It" (`✓`)** buttons with haptic feedback.
-- **Safety Invariant:** Grandparents Mode renders and speaks **only** caregiver-verified medicines (`caregiver_verified === true`).
+  - **Medicines Now:** Shows one medicine at a time for the active slot with dot progress indicators and Next/Back controls ([NaniMedicineCard.tsx](frontend/src/components/NaniMedicineCard.tsx)).
+  - **Today's List:** Scrollable daily checklist grouped by Morning, Afternoon, and Night with strip pictures and instant green toggles.
+  - **Hear Medicines / Stop:** Neural Indian MP3 speech (`POST /tts`) with background prefetching ([tts.ts](frontend/src/utils/tts.ts)) and browser `speechSynthesis` fallback.
+  - **Check My Pill (Camera):** Snaps a pill strip (`POST /scan/verify-strip`) and gives a clear green **YES** or red **STOP** verdict aloud.
+  - **Talk (Hands-Free Voice Commands):** Listens in `en-IN`, `hi-IN`, or `mr-IN` for keywords like *"Morning"*, *"Night"*, *"Taken"*, *"Help"*, or regional equivalents (`सुबह`, `रात`, `लिया`, `मदद`, `सकाळ`, `रात्र`, `घेतले`, `मदत`).
+  - **Call Family:** Pre-filled `tel:` emergency dialer and 1-tap WhatsApp SOS alert ([whatsapp.ts](frontend/src/utils/whatsapp.ts)).
+  - **Settings:** Root `rem` text scaling (`A` / `A` / `A`), **AAA High Contrast** toggle (4px black/white borders), **Grid vs. Rows** layout switcher, language switcher (`English` / `हिन्दी` / `मराठी`), and Share Code loader.
+- **Non-Textual Visual Cues:** Sunrise / Sun / Moon icons for time of day, pill-before-plate / plate-before-pill meal pictograms (`Before Food`, `After Food`, `With Food`), tablet-count icons, completion dots, and haptic vibration on confirm.
 
 ### 2. Caregiver Mode (Dual AI Accuracy & Verification Gate)
-- **Quick Family Profile Setup & Switcher:** Create new elder profiles (name, language, caregiver phone, optional custom share code) directly from the workspace home screen or switch across existing profiles (`GET /profiles`, `POST /profile`).
-- **Gemini Vision Prescription & Strip Scanner (`POST /scan`):** Uses `gemini-3.5-flash` (with automatic fallback `gemini-3.8-flash` → `gemini-3.5-flash` → `gemini-3.5-flash-lite`) and strict Pydantic structured outputs, plus automatic demo fallback when no API key is configured.
-- **Two-Layer Verification Gate:**
-  - **Layer 1 (AI Confidence & Clinical Highlighting):** Confidence `< 0.80` or unreadable handwritten fields are flagged **Medium/Low** (`highlight_color: "yellow"`). Allergy or severe drug-interaction conflicts are flagged **critical** (`highlight_color: "red"`).
-  - **Layer 2 (Mandatory Caregiver Confirmation):** Items remain locked out of Grandparents Mode until a caregiver clicks **Confirm Manually Verified**.
-- **Flexible Schedule Publishing:** Choose **Replace existing** (`replace_existing: true`) or **Add to existing** (`replace_existing: false`), edit confirmed medicines (`PATCH /medicines/{medicine_id}`), remove individual items, clear a schedule (`DELETE /profile/{share_code}/medicines`), or reset `DEMO01`.
+- **Quick Family Profile Setup ([ModeSelect.tsx](frontend/src/components/ModeSelect.tsx)):** Create an elder profile or load an existing Share Code (or `DEMO01`) right from the start screen.
+- **Gemini Vision Extraction ([prompts.py](backend/prompts.py)):** Defaults to `gemini-3.5-flash` with fallback chain (`gemini-3.8-flash` → `gemini-3.5-flash` → `gemini-3.5-flash-lite`), Pydantic structured outputs ([schemas.py](backend/schemas.py)), and automatic demo fallback when no key is set.
+- **Clinical Safety Cross-Checks ([scheduler.py](backend/scheduler.py)):** Flags low-confidence OCR (`confidence < 0.80`), missing strengths, `ALLERGY_CONFLICT` against patient allergies, duplicate drug classes, high-alert geriatric drugs (Warfarin, Insulin, Digoxin, Sulfonylureas), and timing interactions (e.g. Levothyroxine vs. Calcium/Iron/PPIs).
+- **Schedule Control:** Replace or append schedules, inline edit medicines (`PATCH /medicines/{medicine_id}`), delete items, flush all active prescriptions, or reset `DEMO01`.
 
-### 3. Visual Medicine Catalog & Deterministic SVG Engine (0 AI Tokens)
-- **60-Entry Indian Medicines Catalog:** Pre-seeded `medicine_catalog` table (`backend/data/indian_medicines_catalog.json`) covering common Indian prescriptions (e.g., *Thyronorm*, *Glycomet-500*, *Amlong-5*, *Atorva-10*, *Dolo 650*, *Pan-D*, *Augmentin*, *Telma*, *Shelcal*, *Ecosprin*, etc.).
-- **Deterministic Vector Strip Thumbnails (`backend/visuals.py`):** Generates lightweight inline SVG pill-strip illustrations (`data:image/svg+xml`) from a compact 6-field `VisualSpec` rendered unclipped in [StripImage.tsx](frontend/src/components/StripImage.tsx).
-- **Descriptive Elder Audio:** Spoken EN/HI/MR scripts describe each pill's **size, color, shape, and strip color** (e.g., *"1 small pale yellow round tablet in the sky blue strip"*), using respectful gender-neutral phrasing (`"Please take..."` / `"कृपया ... लीजिए"` / `"कृपया ... घ्या"`).
+### 3. Visual Medicine Catalog & SVG Engine (0 AI Tokens)
+- **60-Entry Indian Medicines Catalog ([indian_medicines_catalog.json](backend/data/indian_medicines_catalog.json)):** Auto-seeded into `medicine_catalog` covering common Indian brands (*Thyronorm*, *Glycomet-500*, *Amlong-5*, *Atorva-10*, *Dolo 650*, *Pan-D*, *Augmentin*, *Telma*, *Shelcal*, *Ecosprin*, etc.).
+- **Deterministic Vector Strip Illustrations ([backend/visuals.py](backend/visuals.py)):** Renders compact inline `data:image/svg+xml` foil-strip previews displayed cleanly in [StripImage.tsx](frontend/src/components/StripImage.tsx).
+- **Elder-Friendly Voice Scripts:** Speaks each tablet/capsule's **size, color, shape, and strip color** in respectful, gender-neutral EN/HI/MR (`"Please take..."` / `"कृपया ... लीजिए"` / `"कृपया ... घ्या"`).
 
 ### 4. Vitals Tracker, Trend Graphs, Refills & Family WhatsApp Loop
-- **Clinical Rule Engine (`backend/scheduler.py`):** Flags hypothermia/fever, hypotension/hypertension stages, hypertensive crisis, rapid weight gain (`+2.0 kg / 7d`), rapid weight loss (`-2.5 kg / 14d`), and low weight (`< 35 kg`), plus drug-allergy (`ALLERGY_CONFLICT`), duplicate drug classes, and absorption/bleeding interactions.
-- **Responsive Trend Graphs (`frontend/src/components/VitalsCharts.tsx`):** Pure SVG line charts for **Blood Pressure** (systolic circles + diastolic dashed squares), **Temperature** (with green normal-range band), **Weight**, and a **7-day Adherence** bar chart (`GET /profile/{share_code}/trends`), complete with out-of-range red markers and screen-reader `<table>` alternatives.
-- **Refill Countdown (`GET /profile/{share_code}/refills`):** Tracks elapsed days vs. course duration and surfaces `refill_soon` / `completed` alerts in the Vitals dashboard and WhatsApp summary.
-- **1-Tap Family Report (`GET /profile/{share_code}/summary`):** Compiles adherence, taken/pending/missed doses, latest vitals, active alerts, and a ready-to-send `https://wa.me/?text=...` WhatsApp deep link.
+- **WCAG-Compliant SVG Charts ([VitalsCharts.tsx](frontend/src/components/VitalsCharts.tsx)):** Interactive-width line charts for **Blood Pressure**, **Temperature** (with shaded normal range), **Weight**, and a **7-day Adherence** bar chart (`GET /profile/{share_code}/trends`) — with distinct line patterns/shapes and full screen-reader `<table>` alternatives.
+- **Clinical Vital Alerts & Refills:** Flags fever, hypothermia, hypertension stages, rapid weight shifts (`+2.0 kg / 7d` or `-2.5 kg / 14d`), and low weight, alongside course-completion alerts (`GET /profile/{share_code}/refills`).
+- **Mobile-First Navigation ([TopBar.tsx](frontend/src/components/TopBar.tsx) & [VitalsLogger.tsx](frontend/src/components/VitalsLogger.tsx)):** Sticky safe-area mobile bottom navigation (`< 768px`) and stacked mobile vitals cards.
 
 ---
 
@@ -108,8 +141,8 @@ NaniCare/
 
 - **Node.js** (v18+ recommended) and **npm**
 - **Python 3.10+**
-- **Gemini API Key** (optional for local development — both backend and frontend have automatic demo/mock fallbacks)
-- **Neon PostgreSQL** (optional for local development — automatically falls back to `backend/nanicare_local.db` SQLite when `DATABASE_URL` is unset or placeholder)
+- **Gemini API Key** (optional for local testing — demo fallbacks work automatically without one)
+- **Neon PostgreSQL** (optional for local testing — falls back automatically to `backend/nanicare_local.db` SQLite)
 
 ---
 
@@ -117,13 +150,13 @@ NaniCare/
 
 ### Quick Start (Recommended)
 
-From the repository root:
+From the repository root, run [start.sh](start.sh):
 
 ```bash
 ./start.sh
 ```
 
-`start.sh` automatically creates missing `.env` files, initializes `backend/.venv`, installs Python and Node dependencies when lockfiles/requirements change, waits for `/health`, and starts both servers:
+`start.sh` automatically creates missing `.env` files, initializes `backend/.venv`, installs dependencies when requirements/lockfiles change, waits for `/health`, and starts both servers:
 
 - **Frontend App:** [http://localhost:3000](http://localhost:3000)
 - **Backend API:** [http://localhost:8000](http://localhost:8000)
@@ -151,28 +184,27 @@ pip install -r requirements.txt
 uvicorn engine:app --reload --port 8000
 ```
 
-On startup, `init_db()` idempotently creates all 5 tables, seeds the 60-entry `medicine_catalog`, and seeds the `DEMO01` profile (**Kamla Sharma**, 5 medicines, 1 morning dose marked, 2 baseline vitals).
+On startup, `init_db()` idempotently creates all 5 tables, seeds the 60-entry `medicine_catalog`, and seeds `DEMO01` (**Kamla Sharma**, 5 medicines, 1 morning dose marked, 2 baseline vitals).
 
 #### 2. Frontend (React + Express/Vite)
 
 ```bash
 cd frontend
 npm install
-# Connect to FastAPI:
 printf 'VITE_API_URL=http://localhost:8000\n' > .env
 npm run dev
 ```
 
 Frontend operating modes (`frontend/.env`):
-- **Connected to FastAPI (`VITE_API_URL=http://localhost:8000`):** Uses all FastAPI routes including database persistence, neural `edge-tts` audio, SVG visual catalog, refill tracker, trend charts, and camera strip verification.
-- **Offline Mock Mode (`VITE_USE_MOCK_DATA=true`, `VITE_API_URL` unset):** Serves `frontend/src/mocks/devMockData.json` and stores schedules/vitals in browser `localStorage`.
-- **Built-in Express Preview (both unset):** Uses `POST /api/scan` in [frontend/server.ts](frontend/server.ts) (requires `GEMINI_API_KEY` in `frontend/.env`) with `localStorage` persistence.
+- **Connected to FastAPI (`VITE_API_URL=http://localhost:8000`):** Full database persistence, neural `edge-tts` audio, SVG visual catalog, refill tracker, trend charts, and camera strip verification.
+- **Offline Mock Mode (`VITE_USE_MOCK_DATA=true`, `VITE_API_URL` unset):** Serves [devMockData.json](frontend/src/mocks/devMockData.json) with browser `localStorage` persistence.
+- **Built-in Express Preview (both unset):** Uses `POST /api/scan` in [server.ts](frontend/server.ts) (requires `GEMINI_API_KEY` in `frontend/.env`).
 
 ---
 
 ## Configuration Reference
 
-### Backend (`backend/.env`)
+### Backend ([backend/.env.example](backend/.env.example))
 
 | Variable | Purpose | Default |
 | :--- | :--- | :--- |
@@ -182,7 +214,7 @@ Frontend operating modes (`frontend/.env`):
 | `CORS_ORIGINS` | Comma-separated allowed origins (or `*`). | `*` |
 | `DEFAULT_SHARE_CODE` | Auto-seeded demo profile code. | `DEMO01` |
 
-### Frontend (`frontend/.env`)
+### Frontend ([frontend/.env.example](frontend/.env.example))
 
 | Variable | Purpose | Default |
 | :--- | :--- | :--- |
@@ -194,7 +226,7 @@ Frontend operating modes (`frontend/.env`):
 
 ## Backend API Endpoints
 
-Full interactive schemas are available at `/docs`.
+Full interactive schemas are served by [backend/engine.py](backend/engine.py) at `/docs`.
 
 ### System & Demo
 - `GET /` — Service metadata & `/docs` link
@@ -234,9 +266,11 @@ Full interactive schemas are available at `/docs`.
 cd backend
 source .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest -q                # Runs the 13-test unit & integration suite in tests/test_backend.py
+pytest -q                # Runs the 13-test unit & integration suite in backend/tests/test_backend.py
 ./test_api.sh            # Runs all 18 curl smoke checks against http://127.0.0.1:8000
 ```
+
+See [test_backend.py](backend/tests/test_backend.py) and [test_api.sh](backend/test_api.sh).
 
 ### Frontend Checks
 
@@ -251,7 +285,7 @@ npm run preview          # Preview production build
 
 ## Deployment & CI
 
-- **Single Integrated Branch:** `main` is the single active branch. CodeQL (`javascript-typescript` and `python`) runs automatically via [.github/workflows/codeql.yml](.github/workflows/codeql.yml) on push, PR, and weekly schedule.
+- **Single Integrated Branch:** `main` is the single active branch. CodeQL (`javascript-typescript` and `python`) runs automatically via [codeql.yml](.github/workflows/codeql.yml) on push, PR, and weekly schedule.
 - **Database (Neon):** Run [backend/schema.sql](backend/schema.sql) in the Neon SQL Editor (or let `init_db()` create tables at startup) and configure `DATABASE_URL` with `?sslmode=require`.
 - **Backend (Render / Railway):** Set root directory to `backend/`, start command from [backend/Procfile](backend/Procfile) (`uvicorn engine:app --host 0.0.0.0 --port $PORT`), and set `GEMINI_API_KEY`, `DATABASE_URL`, `GEMINI_MODEL=gemini-3.5-flash`, and `CORS_ORIGINS`.
 - **Frontend (Vercel / Render):** Set root directory to `frontend/`, build command `npm run build`, output directory `dist/`, and set `VITE_API_URL` to your deployed FastAPI URL (or run `NODE_ENV=production npm start` with [frontend/server.ts](frontend/server.ts)).
