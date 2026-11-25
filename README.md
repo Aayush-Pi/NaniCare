@@ -6,19 +6,20 @@ NaniCare is a voice-first medication and wellness companion for Indian families.
 
 ## Features
 
-- **Caregiver mode:** Scan a prescription or medicine strip, review the extracted medicine details and safety flags, then confirm the schedule.
-- **Grandparents mode:** View caregiver-verified medicines, see dose timing, hear instructions in English, Hindi, or Marathi, and mark doses taken.
-- **Vitals tracker:** Record temperature, blood pressure, weight, and other readings; review history and create a WhatsApp-ready daily summary.
-- **Shared profiles:** Use a share code (the demo code is `DEMO01`) to connect a family member’s schedule and health records.
-- **Accessible interface:** High-contrast medicine cards, light and dark themes, and browser speech features.
+- **Caregiver mode:** Scan a prescription or medicine strip, review extracted details and safety flags, choose whether to **flush & replace** or **add to existing** schedules, flush/reset schedules, and switch or create elder profiles.
+- **Grandparents mode:** View caregiver-verified medicines, see dose timing, hear instructions via Indian neural speech (`POST /tts` for English, Hindi, and Marathi, with browser speech fallback), and mark doses taken.
+- **Vitals tracker:** Record temperature, blood pressure, weight, and other readings; review or delete entries and create a WhatsApp-ready daily summary.
+- **Shared profiles:** Use a share code (the demo code is `DEMO01`) or create a new profile to connect a family member’s schedule and health records.
+- **Accessible interface:** High-contrast medicine cards, light and dark themes, and multilingual audio support.
 
 ## Project structure
 
 ```text
 NaniCare/
-├── backend/     FastAPI API, database models, schedule and safety logic
+├── start.sh     One-command launcher for backend + frontend
+├── backend/     FastAPI API, database models, schedule/safety logic, and pytest suite
 ├── frontend/    React application and Express/Vite development server
-└── CONTEXT.md   Detailed architecture and API handoff notes
+└── CONTEXT.md   Local architecture and API handoff notes
 ```
 
 The backend is a FastAPI service backed by PostgreSQL (Neon) or local SQLite. It handles profile, medicine, dose, vitals, summary, and prescription-scanning APIs. The frontend is a React and TypeScript application. When configured with `VITE_API_URL`, it connects to the FastAPI service; otherwise, it uses its built-in preview behavior.
@@ -102,7 +103,7 @@ Backend settings are read from `backend/.env`:
 | Variable | Purpose |
 | --- | --- |
 | `GEMINI_API_KEY` | Enables live prescription scanning. |
-| `GEMINI_MODEL` | Gemini model name; defaults to `gemini-2.5-flash`. |
+| `GEMINI_MODEL` | Gemini model name; defaults to `gemini-3.5-flash` (with automatic fallback). |
 | `DATABASE_URL` | PostgreSQL/Neon connection string. Unset or placeholder values use SQLite locally. |
 | `CORS_ORIGINS` | Allowed frontend origins; configure this for your deployment. |
 | `DEFAULT_SHARE_CODE` | Demo profile code; defaults to `DEMO01`. |
@@ -116,14 +117,15 @@ Frontend settings are read from `frontend/.env`:
 
 ## Main backend endpoints
 
-FastAPI exposes interactive documentation at `/docs`. Common endpoints include:
+FastAPI exposes interactive documentation at `/docs`. Endpoints include:
 
-- `GET /health` — service and database status
-- `GET /scan/demo` and `POST /scan` — demo or image-based prescription extraction
-- `POST /medicines/confirm`, `GET /medicines/{share_code}` — confirm and retrieve medicine schedules
-- `GET /schedule/{share_code}`, `POST /doses/mark` — retrieve a daily schedule and record dose status
-- `POST /vitals`, `GET /vitals/{share_code}` — record and retrieve vitals
-- `GET /profile/{share_code}/summary` — daily adherence and vitals summary with WhatsApp share content
+- `GET /health` and `POST /demo/seed` — service/database status and `DEMO01` seed/reset
+- `GET /scan/demo` and `POST /scan` — demo or Gemini Vision prescription/strip extraction
+- `GET /profiles`, `POST /profile`, and `GET /profile/{share_code}` — list, create/update, and fetch elder profiles
+- `POST /medicines/confirm`, `GET /medicines/{share_code}`, `PATCH /medicines/{medicine_id}`, `DELETE /medicines/{medicine_id}`, and `DELETE /profile/{share_code}/medicines` — confirm (replace or append), list, edit, remove, or flush schedules
+- `GET /schedule/{share_code}`, `POST /doses/mark`, `GET /doses/{share_code}`, and `POST /tts` — daily schedule cards, dose tracking, and neural MP3 speech synthesis (`en`/`hi`/`mr`)
+- `POST /vitals`, `GET /vitals/{share_code}`, and `DELETE /vitals/{vital_id}` — record, retrieve, and delete vitals
+- `GET /profile/{share_code}/summary` — daily adherence and vitals summary with WhatsApp deep link
 
 ## Useful commands
 
@@ -139,7 +141,9 @@ npm run lint     # Run TypeScript type checking
 From `backend/` with the virtual environment active:
 
 ```bash
-./test_api.sh    # Run the API smoke checks (backend must be running)
+./test_api.sh                       # Run all 14 API smoke checks (backend must be running)
+pip install -r requirements-dev.txt # Install pytest + httpx for automated tests
+pytest tests/test_backend.py -v     # Run unit and API integration tests
 ```
 
 ## Deployment notes
