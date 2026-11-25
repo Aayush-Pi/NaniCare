@@ -1,13 +1,21 @@
-import { GENERATED_ASSETS, VITALS_RANGES } from "../config";
+import {
+  DEFAULT_SHARE_CODE,
+  GENERATED_ASSETS,
+  INITIAL_VERIFIED_MEDICINES,
+  INITIAL_VITALS,
+  VITALS_RANGES,
+} from "../config";
 import devMockData from "../mocks/devMockData.json";
 import {
   AccuracyLevel,
   ConfirmMedicinesRequest,
   CreateVitalRequest,
   EmergencyContact,
+  LanguageCode,
   MarkDoseRequest,
   MarkDoseResponse,
   MealRelation,
+  ProfileInfo,
   ProfileSummaryResponse,
   ScannedMedicineCandidate,
   ScanPrescriptionResponse,
@@ -393,6 +401,7 @@ export async function confirmMedicines(
         share_code: normalizedCode,
         caregiver_name: payload.verified_by || undefined,
         prescribed_by: payload.doctor_or_clinic || undefined,
+        replace_existing: Boolean(payload.replace_existing),
         medicines: verifiedOnly.map((draft) => ({
           brand_name: draft.medicine_name.trim(),
           strength: draft.dosage.trim() || null,
@@ -508,7 +517,10 @@ export async function confirmMedicines(
   }));
 
   const existing = loadAllStoredMedicines();
-  saveAllStoredMedicines([...created, ...existing]);
+  const base = payload.replace_existing
+    ? existing.filter((m) => m.share_code !== normalizedCode)
+    : existing;
+  saveAllStoredMedicines([...created, ...base]);
   return created;
 }
 
@@ -699,6 +711,150 @@ export async function removeVerifiedMedicine(medicineId: string): Promise<void> 
   }
   const remaining = loadAllStoredMedicines().filter((m) => m.id !== medicineId);
   saveAllStoredMedicines(remaining);
+}
+
+/**
+ * DELETE /profile/{share_code}/medicines
+ * Flushes all active medicines for a share_code so the caregiver can start fresh.
+ */
+export async function flushMedicines(shareCode: string): Promise<number> {
+  const normalizedCode = shareCode.trim().toUpperCase();
+  let deactivatedCount = 0;
+
+  if (FASTAPI_BASE_URL) {
+    const response = await fetch(
+      `${FASTAPI_BASE_URL}/profile/${encodeURIComponent(normalizedCode)}/medicines`,
+      { method: "DELETE" }
+    );
+    if (!response.ok) {
+      throw new Error(`Could not flush schedule for ${normalizedCode}.`);
+    }
+    const data = (await response.json()) as { deactivated_count?: number };
+    deactivatedCount = Number(data.deactivated_count ?? 0);
+  }
+
+  const all = loadAllStoredMedicines();
+  const remaining = all.filter((m) => m.share_code !== normalizedCode);
+  if (!FASTAPI_BASE_URL) {
+    deactivatedCount = all.length - remaining.length;
+  }
+  saveAllStoredMedicines(remaining);
+  return deactivatedCount;
+}
+
+/**
+ * POST /demo/seed?reset=true
+ * Restores DEMO01 back to the clean 5-medicine demo state.
+ */
+export async function resetDemoProfile(): Promise<void> {
+  if (FASTAPI_BASE_URL) {
+    const response = await fetch(`${FASTAPI_BASE_URL}/demo/seed?reset=true`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      throw new Error("Could not reset DEMO01 on backend.");
+    }
+  }
+
+  const otherMeds = loadAllStoredMedicines().filter(
+    (m) => m.share_code !== DEFAULT_SHARE_CODE
+  );
+  saveAllStoredMedicines([...INITIAL_VERIFIED_MEDICINES, ...otherMeds]);
+
+  const otherVitals = loadAllStoredVitals().filter(
+    (v) => v.share_code !== DEFAULT_SHARE_CODE
+  );
+  saveAllStoredVitals([...INITIAL_VITALS, ...otherVitals]);
+}
+
+/**
+ * GET /profiles
+ */
+export async function listProfiles(): Promise<ProfileInfo[]> {
+  if (FASTAPI_BASE_URL) {
+    const response = await fetch(`${FASTAPI_BASE_URL}/profiles`);
+    if (response.ok) {
+      const data = (await response.json()) as Record<string, unknown>[];
+      return data.map((p) => ({
+        share_code: String(p.share_code ?? DEFAULT_SHARE_CODE),
+        elder_name: String(p.elder_name ?? "Nani"),
+        age: typeof p.age === "number" ? p.age : null,
+        preferred_language: (p.preferred_language as LanguageCode) || "hi",
+        caregiver_name: p.caregiver_name ? String(p.caregiver_name) : null,
+        caregiver_phone: p.caregiver_phone ? String(p.caregiver_phone) : null,
+        active_medicine_count: Number(p.active_medicine_count ?? 0),
+      }));
+    }
+  }
+
+  const meds = loadAllStoredMedicines();
+  const counts = new Map<string, number>();
+  for (const m of meds) {
+    counts.set(m.share_code, (counts.get(m.share_code) ?? 0) + 1);
+  }
+  if (!counts.has(DEFAULT_SHARE_CODE)) {
+    counts.set(DEFAULT_SHARE_CODE, 0);
+  }
+  return Array.from(counts.entries()).map(([code, count]) => ({
+    share_code: code,
+    elder_name: code === DEFAULT_SHARE_CODE ? "Kamla Nani" : `Profile ${code}`,
+    preferred_language: "hi",
+    active_medicine_count: count,
+  }));
+}
+
+/**
+ * POST /profile
+ */
+export async function createProfile(req: {
+  share_code?: string;
+  elder_name: string;
+  age?: number;
+  preferred_language: LanguageCode;
+  caregiver_name?: string;
+  caregiver_phone?: string;
+}): Promise<ProfileInfo> {
+  if (FASTAPI_BASE_URL) {
+    const response = await fetch(`${FASTAPI_BASE_URL}/profile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        share_code: req.share_code?.trim().toUpperCase() || undefined,
+        elder_name: req.elder_name.trim(),
+        age: req.age || undefined,
+        preferred_language: req.preferred_language,
+        caregiver_name: req.caregiver_name?.trim() || undefined,
+        caregiver_phone: req.caregiver_phone?.trim() || undefined,
+      }),
+    });
+    if (!response.ok) {
+      const err = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      throw new Error(String(err.detail ?? "Could not create profile."));
+    }
+    const p = (await response.json()) as Record<string, unknown>;
+    return {
+      share_code: String(p.share_code),
+      elder_name: String(p.elder_name),
+      age: typeof p.age === "number" ? p.age : null,
+      preferred_language: (p.preferred_language as LanguageCode) || req.preferred_language,
+      caregiver_name: p.caregiver_name ? String(p.caregiver_name) : null,
+      caregiver_phone: p.caregiver_phone ? String(p.caregiver_phone) : null,
+      active_medicine_count: Number(p.active_medicine_count ?? 0),
+    };
+  }
+
+  const randomCode =
+    req.share_code?.trim().toUpperCase() ||
+    `NANI${Math.floor(10 + Math.random() * 89)}`;
+  return {
+    share_code: randomCode,
+    elder_name: req.elder_name.trim(),
+    age: req.age ?? null,
+    preferred_language: req.preferred_language,
+    caregiver_name: req.caregiver_name?.trim() || null,
+    caregiver_phone: req.caregiver_phone?.trim() || null,
+    active_medicine_count: 0,
+  };
 }
 
 /**
