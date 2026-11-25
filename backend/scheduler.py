@@ -501,25 +501,35 @@ def build_multilingual_instructions(
     schedule_slots: list[ScheduleSlot],
     as_needed: bool,
     frequency_notes: str | None = None,
+    visual_desc: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Generate warm, respectful elder-friendly TTS audio scripts in EN, HI, and MR."""
+    """Generate warm, respectful elder-friendly TTS audio scripts (with pill size/color/shape) in EN, HI, and MR."""
     med_label = f"{brand_name} {strength}".strip() if strength else brand_name.strip()
     form = _FORM_LABELS.get(dosage_form, _FORM_LABELS["tablet"])
     meal = _MEAL_PHRASES.get(meal_relation, _MEAL_PHRASES["after_food"])
     qty = schedule_slots[0].dose_qty if schedule_slots else 1.0
 
+    item_en = visual_desc["en"] if visual_desc and visual_desc.get("en") else form["en"]
+    item_hi = visual_desc["hi"] if visual_desc and visual_desc.get("hi") else form["hi"]
+    item_mr = visual_desc["mr"] if visual_desc and visual_desc.get("mr") else form["mr"]
+
+    # Avoid repeating "empty stomach" twice when the slot label already says it
+    has_empty_slot = any(s.slot == "empty_stomach" for s in schedule_slots)
+    meal_hi = "सादे पानी के साथ" if (has_empty_slot and meal_relation == "empty_stomach") else meal["hi"]
+    meal_mr = "साध्या पाण्यासोबत" if (has_empty_slot and meal_relation == "empty_stomach") else meal["mr"]
+
     if as_needed:
         note_en = f" ({frequency_notes})" if frequency_notes else ""
         en = (
-            f"Nani, take {_format_qty(qty)} {form['en']} of {med_label} "
+            f"Nani, take {_format_qty(qty)} {item_en} of {med_label} "
             f"only when needed{note_en}, {meal['en']}."
         )
         hi = (
-            f"नानी जी, {med_label} की {_format_qty_hi(qty)} {form['hi']} "
+            f"नानी जी, {med_label} की {_format_qty_hi(qty)} {item_hi} "
             f"केवल ज़रूरत पड़ने पर {meal['hi']} लीजिए।"
         )
         mr = (
-            f"आजी, {med_label} ची {_format_qty_mr(qty)} {form['mr']} "
+            f"आजी, {med_label} ची {_format_qty_mr(qty)} {item_mr} "
             f"फक्त गरज असल्यास {meal['mr']} घ्या."
         )
         return {"en": en, "hi": hi, "mr": mr}
@@ -529,16 +539,16 @@ def build_multilingual_instructions(
     slots_mr = " आणि ".join(s.label_mr for s in schedule_slots)
 
     en = (
-        f"Nani, please take {_format_qty(qty)} {form['en']} of {med_label} "
+        f"Nani, please take {_format_qty(qty)} {item_en} of {med_label} "
         f"in the {slots_en}, {meal['en']}."
     )
     hi = (
-        f"नानी जी, {slots_hi} {meal['hi']} {med_label} की "
-        f"{_format_qty_hi(qty)} {form['hi']} लीजिए।"
+        f"नानी जी, {slots_hi} {meal_hi} {med_label} की "
+        f"{_format_qty_hi(qty)} {item_hi} लीजिए।"
     )
     mr = (
-        f"आजी, {slots_mr} {meal['mr']} {med_label} ची "
-        f"{_format_qty_mr(qty)} {form['mr']} घ्या."
+        f"आजी, {slots_mr} {meal_mr} {med_label} ची "
+        f"{_format_qty_mr(qty)} {item_mr} घ्या."
     )
     return {"en": en, "hi": hi, "mr": mr}
 
@@ -550,31 +560,39 @@ def build_slot_spoken_text(
     meal_relation: MealRelation,
     slot: ScheduleSlot,
     language: str = "hi",
+    visual_desc: dict[str, str] | None = None,
 ) -> str:
-    """Build a focused single-slot spoken audio prompt for a Nani Mode card."""
+    """Build a focused single-slot spoken audio prompt (with pill size/color/shape) for a Nani Mode card."""
     med_label = f"{brand_name} {strength}".strip() if strength else brand_name.strip()
     form = _FORM_LABELS.get(dosage_form, _FORM_LABELS["tablet"])
     meal = _MEAL_PHRASES.get(meal_relation, _MEAL_PHRASES["after_food"])
 
+    item_en = visual_desc["en"] if visual_desc and visual_desc.get("en") else form["en"]
+    item_hi = visual_desc["hi"] if visual_desc and visual_desc.get("hi") else form["hi"]
+    item_mr = visual_desc["mr"] if visual_desc and visual_desc.get("mr") else form["mr"]
+
     if slot.slot == "sos":
         scripts = build_multilingual_instructions(
-            brand_name, strength, dosage_form, meal_relation, [slot], True
+            brand_name, strength, dosage_form, meal_relation, [slot], True, visual_desc=visual_desc
         )
         return scripts.get(language, scripts["hi"])
 
+    meal_hi = "सादे पानी के साथ" if (slot.slot == "empty_stomach" and meal_relation == "empty_stomach") else meal["hi"]
+    meal_mr = "साध्या पाण्यासोबत" if (slot.slot == "empty_stomach" and meal_relation == "empty_stomach") else meal["mr"]
+
     if language == "mr":
         return (
-            f"आजी, {slot.label_mr} {meal['mr']} {med_label} ची "
-            f"{_format_qty_mr(slot.dose_qty)} {form['mr']} घ्या."
+            f"आजी, {slot.label_mr} {meal_mr} {med_label} ची "
+            f"{_format_qty_mr(slot.dose_qty)} {item_mr} घ्या."
         )
     if language == "en":
         return (
             f"Nani, for {slot.label_en} at {slot.time}, please take "
-            f"{_format_qty(slot.dose_qty)} {form['en']} of {med_label} {meal['en']}."
+            f"{_format_qty(slot.dose_qty)} {item_en} of {med_label} {meal['en']}."
         )
     return (
-        f"नानी जी, {slot.label_hi} {meal['hi']} {med_label} की "
-        f"{_format_qty_hi(slot.dose_qty)} {form['hi']} लीजिए।"
+        f"नानी जी, {slot.label_hi} {meal_hi} {med_label} की "
+        f"{_format_qty_hi(slot.dose_qty)} {item_hi} लीजिए।"
     )
 
 

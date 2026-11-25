@@ -236,3 +236,143 @@ def render_medicine_svg(
     )
     encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
     return f"data:image/svg+xml;base64,{encoded}"
+
+
+_COLOR_PALETTE: list[tuple[tuple[int, int, int], dict[str, str]]] = [
+    ((255, 255, 255), {"en": "white", "hi": "सफेद", "mr": "पांढरी"}),
+    ((254, 243, 199), {"en": "pale yellow", "hi": "हल्की पीली", "mr": "फिकट पिवळी"}),
+    ((254, 240, 138), {"en": "yellow", "hi": "पीली", "mr": "पिवळी"}),
+    ((254, 215, 170), {"en": "light orange", "hi": "हल्की नारंगी", "mr": "फिकट नारिंगी"}),
+    ((249, 115, 22), {"en": "orange", "hi": "नारंगी", "mr": "नारिंगी"}),
+    ((219, 234, 254), {"en": "light blue", "hi": "हल्की नीली", "mr": "फिकट निळी"}),
+    ((37, 99, 235), {"en": "blue", "hi": "नीली", "mr": "निळी"}),
+    ((2, 132, 199), {"en": "sky blue", "hi": "आसमानी नीली", "mr": "आकाशी निळी"}),
+    ((204, 251, 241), {"en": "light green", "hi": "हल्की हरी", "mr": "फिकट हिरवी"}),
+    ((22, 163, 74), {"en": "green", "hi": "हरी", "mr": "हिरवी"}),
+    ((251, 207, 232), {"en": "pink", "hi": "गुलाबी", "mr": "गुलाबी"}),
+    ((220, 38, 38), {"en": "red", "hi": "लाल", "mr": "लाल"}),
+    ((153, 27, 27), {"en": "dark red", "hi": "गहरी लाल", "mr": "गडद लाल"}),
+    ((124, 58, 237), {"en": "purple", "hi": "बैंगनी", "mr": "जांभळी"}),
+    ((217, 119, 6), {"en": "golden brown", "hi": "सुनहरी भूरी", "mr": "सोनेरी तपकिरी"}),
+]
+
+_STRIP_LOCATIVE: dict[str, tuple[str, str]] = {
+    "white": ("सफेद पट्टी में", "पांढऱ्या पट्टीत"),
+    "pale yellow": ("हल्की पीली पट्टी में", "फिकट पिवळ्या पट्टीत"),
+    "yellow": ("पीली पट्टी में", "पिवळ्या पट्टीत"),
+    "light orange": ("हल्की नारंगी पट्टी में", "फिकट नारिंगी पट्टीत"),
+    "orange": ("नारंगी पट्टी में", "नारिंगी पट्टीत"),
+    "light blue": ("हल्की नीली पट्टी में", "फिकट निळ्या पट्टीत"),
+    "blue": ("नीली पट्टी में", "निळ्या पट्टीत"),
+    "sky blue": ("आसमानी नीली पट्टी में", "आकाशी निळ्या पट्टीत"),
+    "light green": ("हल्की हरी पट्टी में", "फिकट हिरव्या पट्टीत"),
+    "green": ("हरी पट्टी में", "हिरव्या पट्टीत"),
+    "pink": ("गुलाबी पट्टी में", "गुलाबी पट्टीत"),
+    "red": ("लाल पट्टी में", "लाल पट्टीत"),
+    "dark red": ("गहरी लाल पट्टी में", "गडद लाल पट्टीत"),
+    "purple": ("बैंगनी पट्टी में", "जांभळ्या पट्टीत"),
+    "golden brown": ("सुनहरी पट्टी में", "सोनेरी पट्टीत"),
+}
+
+
+def _nearest_color_names(hex_color: str | None) -> dict[str, str]:
+    clean = sanitize_hex(hex_color, "#FFFFFF")
+    r, g, b = int(clean[1:3], 16), int(clean[3:5], 16), int(clean[5:7], 16)
+    best_dist = float("inf")
+    best_names = _COLOR_PALETTE[0][1]
+    for (pr, pg, pb), names in _COLOR_PALETTE:
+        dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
+        if dist < best_dist:
+            best_dist = dist
+            best_names = names
+    return best_names
+
+
+def _infer_pill_size(strength: str | None, shape: str) -> dict[str, str] | None:
+    """Infer elder-friendly size cue (small / medium / large) from strength or oblong shape."""
+    if shape not in ("round", "oval", "oblong", "capsule_bicolor"):
+        return None
+    if strength:
+        match = re.search(r"(\d+(?:\.\d+)?)\s*(mcg|ug|mg)\b", strength, flags=re.IGNORECASE)
+        if match:
+            val = float(match.group(1))
+            unit = match.group(2).lower()
+            if unit in ("mcg", "ug") or val <= 50:
+                return {"en": "small", "hi": "छोटी", "mr": "लहान"}
+            if val >= 500:
+                return {"en": "large", "hi": "बड़ी", "mr": "मोठी"}
+            return {"en": "medium-sized", "hi": "मध्यम आकार की", "mr": "मध्यम आकाराची"}
+    if shape == "oblong":
+        return {"en": "long", "hi": "लंबी", "mr": "लांबट"}
+    return None
+
+
+def _mr_color_oblique(color_mr: str) -> str:
+    """Convert feminine Marathi color adjective to natural oblique form before 'रंगाचा'."""
+    overrides = {
+        "पांढरी": "पांढऱ्या",
+        "फिकट पिवळी": "फिकट पिवळ्या",
+        "पिवळी": "पिवळ्या",
+        "फिकट निळी": "फिकट निळ्या",
+        "निळी": "निळ्या",
+        "आकाशी निळी": "आकाशी निळ्या",
+        "फिकट हिरवी": "फिकट हिरव्या",
+        "हिरवी": "हिरव्या",
+        "जांभळी": "जांभळ्या",
+        "सुनहरी भूरी": "सोनेरी तपकिरी",
+        "सोनेरी तपकिरी": "सोनेरी तपकिरी",
+    }
+    return overrides.get(color_mr, color_mr)
+
+
+def describe_visual_for_elder(
+    visual_spec: dict[str, Any] | None,
+    dosage_form: str = "tablet",
+    strength: str | None = None,
+) -> dict[str, str]:
+    """Generate clear EN/HI/MR visual cues (size, color, shape, strip color) for TTS."""
+    spec = visual_spec or default_visual_spec_for_form(dosage_form)
+    shape = str(spec.get("shape") or _FORM_DEFAULT_SHAPE.get(dosage_form, "round")).lower()
+    primary = _nearest_color_names(spec.get("primary_color"))
+    secondary = _nearest_color_names(spec.get("secondary_color")) if spec.get("secondary_color") else None
+    accent = _nearest_color_names(spec.get("strip_accent"))
+    size = _infer_pill_size(strength, shape)
+    accent_hi, accent_mr = _STRIP_LOCATIVE.get(accent["en"], ("पट्टी में", "पट्टीत"))
+
+    if shape == "capsule_bicolor":
+        p_mr = _mr_color_oblique(primary["mr"])
+        if secondary and secondary["en"] != primary["en"]:
+            s_mr = _mr_color_oblique(secondary["mr"])
+            en = f"{primary['en']}-and-{secondary['en']} capsule (in the {accent['en']} strip)"
+            hi = f"{primary['hi']} और {secondary['hi']} रंग का कैप्सूल ({accent_hi})"
+            mr = f"{p_mr} आणि {s_mr} रंगाचा कॅप्सूल ({accent_mr})"
+        else:
+            en = f"{primary['en']} capsule (in the {accent['en']} strip)"
+            hi = f"{primary['hi']} रंग का कैप्सूल ({accent_hi})"
+            mr = f"{p_mr} रंगाचा कॅप्सूल ({accent_mr})"
+        return {"en": en, "hi": hi, "mr": mr}
+
+    if shape in ("round", "oval", "oblong"):
+        shape_en = {"round": "round tablet", "oval": "oval tablet", "oblong": "oblong tablet"}[shape]
+        shape_hi = {"round": "गोल गोली", "oval": "अंडाकार गोली", "oblong": "लंबी गोली"}[shape]
+        shape_mr = {"round": "गोल गोळी", "oval": "अंडाकृती गोळी", "oblong": "लांबट गोळी"}[shape]
+        size_en = f"{size['en']} " if size else ""
+        size_hi = f"{size['hi']} " if size and not (shape == "oblong" and size["en"] == "long") else ""
+        size_mr = f"{size['mr']} " if size and not (shape == "oblong" and size["en"] == "long") else ""
+        en = f"{size_en}{primary['en']} {shape_en} (in the {accent['en']} strip)"
+        hi = f"{size_hi}{primary['hi']} {shape_hi} ({accent_hi})"
+        mr = f"{size_mr}{primary['mr']} {shape_mr} ({accent_mr})"
+        return {"en": en, "hi": hi, "mr": mr}
+
+    non_pill_labels = {
+        "bottle": (f"{accent['en']}-label syrup bottle", f"{accent['hi']} लेबल वाली दवा की शीशी", f"{accent['mr']} लेबल असलेली औषधाची बाटली"),
+        "dropper": (f"{accent['en']}-cap dropper bottle", f"{accent['hi']} ढक्कन वाली ड्रॉप की शीशी", f"{accent['mr']} झाकणाची ड्रॉपची बाटली"),
+        "inhaler": (f"{primary['en']} inhaler", f"{primary['hi']} रंग का इनहेलर", f"{primary['mr']} रंगाचा इनहेलर"),
+        "tube": (f"{accent['en']}-band ointment tube", f"{accent['hi']} पट्टी वाली मरहम की ट्यूब", f"{accent['mr']} पट्टीची मलमाची ट्यूब"),
+        "vial": (f"{accent['en']}-label injection", f"{accent['hi']} लेबल वाला इंजेक्शन", f"{accent['mr']} लेबल असलेले इंजेक्शन"),
+    }
+    en, hi, mr = non_pill_labels.get(
+        shape,
+        (f"{primary['en']} medicine", f"{primary['hi']} दवाई", f"{primary['mr']} औषध"),
+    )
+    return {"en": en, "hi": hi, "mr": mr}

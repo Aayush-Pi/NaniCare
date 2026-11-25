@@ -553,3 +553,50 @@ def test_refills_strip_verifier_and_trends(client: TestClient):
     assert trends["vitals_trend"]["readings_count"] >= 2
 
 
+def test_elder_friendly_visual_tts_includes_size_color_and_shape(client: TestClient):
+    # Thyronorm 50 mcg -> small pale yellow round tablet (in the sky blue strip)
+    sched_en = client.get("/schedule/DEMO01?lang=en").json()
+    thyro_en = next(c for c in sched_en["cards"] if c["brand_name"] == "Thyronorm")
+    assert "small" in thyro_en["spoken_text"].lower()
+    assert "yellow" in thyro_en["spoken_text"].lower()
+    assert "round tablet" in thyro_en["spoken_text"].lower()
+    assert "strip" in thyro_en["spoken_text"].lower()
+
+    # Check Hindi avoids duplicate 'खाली पेट खाली पेट' and includes size/color/shape
+    sched_hi = client.get("/schedule/DEMO01?lang=hi").json()
+    thyro_hi = next(c for c in sched_hi["cards"] if c["brand_name"] == "Thyronorm")
+    assert "खाली पेट खाली पेट" not in thyro_hi["spoken_text"]
+    assert "छोटी" in thyro_hi["spoken_text"]
+    assert "गोल गोली" in thyro_hi["spoken_text"]
+
+    # Check Marathi avoids duplicate 'उपाशीपोटी उपाशीपोटी' and includes size/color/shape
+    sched_mr = client.get("/schedule/DEMO01?lang=mr").json()
+    thyro_mr = next(c for c in sched_mr["cards"] if c["brand_name"] == "Thyronorm")
+    assert "उपाशीपोटी उपाशीपोटी" not in thyro_mr["spoken_text"]
+    assert "लहान" in thyro_mr["spoken_text"]
+    assert "गोल गोळी" in thyro_mr["spoken_text"]
+
+    # Check bicolor capsule (Pan-D -> orange-and-white capsule)
+    conf_res = client.post(
+        "/medicines/confirm",
+        json={
+            "share_code": "DEMO01",
+            "replace_existing": False,
+            "medicines": [
+                {
+                    "brand_name": "Pan-D",
+                    "strength": "40 mg",
+                    "dosage_form": "capsule",
+                    "dosage_pattern": "1-0-0",
+                    "meal_relation": "empty_stomach",
+                }
+            ],
+        },
+    )
+    assert conf_res.status_code == 201
+    pan_med = conf_res.json()["medicines"][0]
+    assert "orange-and-white capsule" in pan_med["instructions_en"].lower()
+    assert "नारंगी और सफेद" in pan_med["instructions_hi"]
+    assert "नारिंगी आणि पांढऱ्या" in pan_med["instructions_mr"]
+
+
