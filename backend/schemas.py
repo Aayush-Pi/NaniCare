@@ -558,3 +558,15 @@ class DailySummaryResponse(BaseModel):
     active_safety_flags: list[SafetyFlag] = Field(default_factory=list)
     whatsapp_message: str
     whatsapp_url: str
+
+
+# =============================================================================
+# 7. Neural Text-to-Speech Schema
+# =============================================================================
+
+
+class TTSRequest(BaseModel):
+    """Request payload for human-sounding Indian neural speech synthesis."""
+
+    text: str = Field(..., min_length=1, max_length=2500)
+    language: LanguageCode = "en"

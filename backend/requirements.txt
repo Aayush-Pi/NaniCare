@@ -8,3 +8,4 @@ python-multipart>=0.0.17,<1.0.0
 python-dotenv>=1.0.1,<2.0.0
 pillow>=10.4.0,<14.0.0
 tzdata>=2024.2
+edge-tts>=7.0.0,<8.0.0
