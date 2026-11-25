@@ -109,6 +109,10 @@ export function CaregiverPage({
   const [contactForm, setContactForm] = useState<EmergencyContact>(emergencyContact);
   const [contactSaved, setContactSaved] = useState(false);
 
+  useEffect(() => {
+    setContactForm(emergencyContact);
+  }, [emergencyContact]);
+
   const refreshProfiles = useCallback(async () => {
     try {
       const list = await listProfiles();
@@ -367,20 +371,23 @@ export function CaregiverPage({
   }
 
   return (
-    <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <main
+      id="main-content"
+      className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 pb-24 md:pb-12 space-y-6 sm:space-y-8"
+    >
       {/* Header Row */}
-      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-5 border-b border-slate-200 dark:border-slate-800 pb-6">
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
         <div className="space-y-1.5">
-          <p className="text-xs font-semibold text-teal-700 dark:text-teal-400">
-            Caregiver Mode · Dual AI Accuracy &amp; Manual Verification
+          <p className="text-xs font-bold uppercase tracking-wider text-teal-700 dark:text-teal-400">
+            Caregiver Mode · AI Accuracy &amp; Manual Verification
           </p>
           <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
             Prescription Scanner &amp; Verification Gate
           </h1>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 w-full sm:w-auto">
             <span>Profile:</span>
             {profiles.length > 0 && (
               <select
@@ -389,7 +396,7 @@ export function CaregiverPage({
                 onChange={(e) => {
                   if (e.target.value) onChangeShareCode(e.target.value);
                 }}
-                className="min-h-[42px] px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold"
+                className="flex-1 sm:flex-none min-h-[44px] px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold"
               >
                 {!profiles.some((p) => p.share_code === shareCode) && (
                   <option value="">{shareCode} (Custom)</option>
@@ -407,35 +414,38 @@ export function CaregiverPage({
               onChange={(e) => onChangeShareCode(e.target.value.toUpperCase())}
               maxLength={12}
               aria-label="Family profile share code"
-              className="w-24 min-h-[42px] px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono-data text-sm uppercase"
+              className="w-24 min-h-[44px] px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono-data text-sm uppercase"
             />
             <button
               type="button"
               onClick={() => setShowNewProfileForm((v) => !v)}
-              className="inline-flex items-center gap-1.5 min-h-[42px] px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              aria-expanded={showNewProfileForm}
+              className="inline-flex items-center gap-1.5 min-h-[44px] px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
               <UserPlus className="w-3.5 h-3.5 text-teal-700 dark:text-teal-400" aria-hidden="true" />
               <span>New Profile</span>
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={onNavigateVitals}
-            className="inline-flex items-center gap-2 min-h-[42px] px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            <Activity className="w-4 h-4 text-teal-700 dark:text-teal-400" aria-hidden="true" />
-            <span>Vitals &amp; WhatsApp</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={onNavigateVitals}
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Activity className="w-4 h-4 text-teal-700 dark:text-teal-400" aria-hidden="true" />
+              <span>Vitals &amp; Summary</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={onNavigateNani}
-            className="inline-flex items-center gap-2 min-h-[42px] px-5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 dark:bg-teal-500 dark:hover:bg-teal-400 text-white dark:text-slate-950 text-sm font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            <span>Open Grandparents Mode</span>
-            <ArrowRight className="w-4 h-4" aria-hidden="true" />
-          </button>
+            <button
+              type="button"
+              onClick={onNavigateNani}
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2 rounded-md bg-teal-700 hover:bg-teal-800 dark:bg-teal-500 dark:hover:bg-teal-400 text-white dark:text-slate-950 text-sm font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <span>Grandparents Mode</span>
+              <ArrowRight className="w-4 h-4" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -443,7 +453,7 @@ export function CaregiverPage({
       {showNewProfileForm && (
         <form
           onSubmit={(e) => void handleCreateProfile(e)}
-          className="rounded-2xl border border-teal-200 dark:border-teal-800 bg-teal-50/50 dark:bg-teal-950/20 p-5 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
+          className="rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50/50 dark:bg-teal-950/20 p-5 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
         >
           <label className="block space-y-1">
             <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
@@ -455,7 +465,7 @@ export function CaregiverPage({
               placeholder="e.g. Meera Dadi"
               value={newElderName}
               onChange={(e) => setNewElderName(e.target.value)}
-              className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+              className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
             />
           </label>
 
@@ -469,7 +479,7 @@ export function CaregiverPage({
               maxLength={12}
               value={newCustomCode}
               onChange={(e) => setNewCustomCode(e.target.value.toUpperCase())}
-              className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-data uppercase"
+              className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm font-mono-data uppercase"
             />
           </label>
 
@@ -480,7 +490,7 @@ export function CaregiverPage({
             <select
               value={newProfileLang}
               onChange={(e) => setNewProfileLang(e.target.value as LanguageCode)}
-              className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
+              className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm"
             >
               <option value="hi">Hindi (हिन्दी)</option>
               <option value="mr">Marathi (मराठी)</option>
@@ -492,7 +502,7 @@ export function CaregiverPage({
             <button
               type="submit"
               disabled={isCreatingProfile}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-[42px] px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-sm font-bold cursor-pointer disabled:opacity-50"
+              className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2 rounded-md bg-teal-700 hover:bg-teal-800 text-white text-sm font-bold cursor-pointer disabled:opacity-50"
             >
               <Plus className="w-4 h-4" aria-hidden="true" />
               <span>{isCreatingProfile ? "Creating..." : "Create"}</span>
@@ -500,7 +510,7 @@ export function CaregiverPage({
             <button
               type="button"
               onClick={() => setShowNewProfileForm(false)}
-              className="min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold cursor-pointer"
+              className="min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 text-xs font-semibold cursor-pointer"
             >
               Cancel
             </button>
@@ -512,14 +522,14 @@ export function CaregiverPage({
       <div
         role="tablist"
         aria-label="Caregiver workspace tabs"
-        className="flex flex-wrap items-center gap-1.5 p-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 w-fit max-w-full"
+        className="flex flex-wrap items-center gap-1 p-1 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 w-full sm:w-fit max-w-full"
       >
         <button
           type="button"
           role="tab"
           aria-selected={activeTab === "scan"}
           onClick={() => setActiveTab("scan")}
-          className={`inline-flex items-center gap-2 min-h-[42px] px-4 py-2 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          className={`flex-1 sm:flex-none inline-flex items-center justify-center gap-2 min-h-[44px] px-3.5 py-2 rounded-sm text-sm font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             activeTab === "scan"
               ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm"
               : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
@@ -534,7 +544,7 @@ export function CaregiverPage({
           role="tab"
           aria-selected={activeTab === "verified"}
           onClick={() => setActiveTab("verified")}
-          className={`inline-flex items-center gap-2 min-h-[42px] px-4 py-2 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          className={`flex-1 sm:flex-none inline-flex items-center justify-center gap-2 min-h-[44px] px-3.5 py-2 rounded-sm text-sm font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             activeTab === "verified"
               ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm"
               : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
@@ -542,7 +552,7 @@ export function CaregiverPage({
         >
           <ClipboardCheck className="w-4 h-4" aria-hidden="true" />
           <span className="tabular-nums">
-            Verified Schedule ({verifiedMedicines.length})
+            Schedule ({verifiedMedicines.length})
           </span>
         </button>
 
@@ -551,7 +561,7 @@ export function CaregiverPage({
           role="tab"
           aria-selected={activeTab === "emergency"}
           onClick={() => setActiveTab("emergency")}
-          className={`inline-flex items-center gap-2 min-h-[42px] px-4 py-2 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          className={`flex-1 sm:flex-none inline-flex items-center justify-center gap-2 min-h-[44px] px-3.5 py-2 rounded-sm text-sm font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             activeTab === "emergency"
               ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm"
               : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
@@ -564,7 +574,7 @@ export function CaregiverPage({
 
       {/* Tab 1: Prescription Scanner + Yellow Review Gate */}
       {activeTab === "scan" && (
-        <div className="space-y-8">
+        <div className="space-y-6">
           <PrescriptionScanner
             previewImage={previewImage}
             scanLabel={scanLabel}
@@ -579,7 +589,8 @@ export function CaregiverPage({
           {publishNotice && (
             <div
               role="status"
-              className="flex items-start gap-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 p-4 text-sm font-medium text-emerald-900 dark:text-emerald-200"
+              aria-live="polite"
+              className="flex items-start gap-3 rounded-md border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/40 p-4 text-sm font-medium text-green-900 dark:text-green-200"
             >
               <ShieldCheck className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
               <span>{publishNotice}</span>
@@ -590,8 +601,8 @@ export function CaregiverPage({
             <section className="space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
                 <div className="space-y-1">
-                  <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
-                    Step 2 of 2 · Yellow Verification Gate (AI Probability + Manual Confirmation)
+                  <p className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-400">
+                    Step 2 of 2 · Caregiver Verification Gate
                   </p>
                   <h2 className="font-display text-2xl font-bold text-slate-900 dark:text-white">
                     Review &amp; Confirm Extracted Medicines
@@ -611,7 +622,7 @@ export function CaregiverPage({
                 {regimenSafetyFlags.length > 0 && (
                   <div
                     role="alert"
-                    className="rounded-2xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 p-4 space-y-2"
+                    className="rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 p-4 space-y-2"
                   >
                     <p className="text-xs font-bold uppercase tracking-wide text-red-800 dark:text-red-300">
                       Regimen Safety &amp; Interaction Warnings
@@ -642,11 +653,11 @@ export function CaregiverPage({
                 ))}
               </div>
 
-              <div className="rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-4">
+              <div className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="space-y-1">
                     <p className="text-sm font-bold text-slate-900 dark:text-white">
-                      Confirm Schedule (POST /medicines/confirm)
+                      Publish Verified Schedule to {shareCode}
                     </p>
                     <p className="text-xs text-slate-600 dark:text-slate-400">
                       {unverifiedCount > 0
@@ -659,7 +670,7 @@ export function CaregiverPage({
                     type="button"
                     disabled={verifiedDrafts.length === 0 || isConfirming}
                     onClick={() => void handleConfirmSchedule()}
-                    className="inline-flex items-center justify-center gap-2 min-h-[48px] px-6 py-3 rounded-xl bg-teal-700 hover:bg-teal-800 dark:bg-teal-500 dark:hover:bg-teal-400 text-white dark:text-slate-950 text-sm font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-[48px] px-6 py-3 rounded-md bg-teal-700 hover:bg-teal-800 dark:bg-teal-500 dark:hover:bg-teal-400 text-white dark:text-slate-950 text-sm font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     {isConfirming ? (
                       <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
@@ -668,7 +679,7 @@ export function CaregiverPage({
                     )}
                     <span>
                       {saveMode === "replace"
-                        ? `Flush & Publish (${verifiedDrafts.length}) to ${shareCode}`
+                        ? `Replace & Publish (${verifiedDrafts.length})`
                         : `Add (${verifiedDrafts.length}) to ${shareCode}`}
                     </span>
                   </button>
@@ -678,7 +689,7 @@ export function CaregiverPage({
                   <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
                     When saving to {shareCode}:
                   </span>
-                  <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold cursor-pointer">
+                  <label className="inline-flex items-center gap-2 min-h-[38px] px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-xs font-semibold cursor-pointer">
                     <input
                       type="radio"
                       name="saveMode"
@@ -686,9 +697,9 @@ export function CaregiverPage({
                       checked={saveMode === "replace"}
                       onChange={() => setSaveMode("replace")}
                     />
-                    <span>Flush previous &amp; replace ({verifiedMedicines.length} active)</span>
+                    <span>Replace existing ({verifiedMedicines.length} active)</span>
                   </label>
-                  <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold cursor-pointer">
+                  <label className="inline-flex items-center gap-2 min-h-[38px] px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-xs font-semibold cursor-pointer">
                     <input
                       type="radio"
                       name="saveMode"
@@ -708,7 +719,7 @@ export function CaregiverPage({
       {/* Tab 2: Live Verified Schedule */}
       {activeTab === "verified" && (
         <section className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-3.5">
             <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
               Active medicines for <span className="font-mono-data">{shareCode}</span>:{" "}
               {verifiedMedicines.length}
@@ -719,7 +730,7 @@ export function CaregiverPage({
                   type="button"
                   disabled={isFlushing}
                   onClick={() => void handleResetDemo()}
-                  className="inline-flex items-center gap-1.5 min-h-[38px] px-3.5 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 min-h-[40px] px-3.5 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
                 >
                   <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
                   <span>Reset DEMO01</span>
@@ -730,10 +741,10 @@ export function CaregiverPage({
                   type="button"
                   disabled={isFlushing}
                   onClick={() => void handleFlushSchedule()}
-                  className="inline-flex items-center gap-1.5 min-h-[38px] px-3.5 py-1.5 rounded-xl border border-red-200 dark:border-red-900 text-red-700 dark:text-red-400 text-xs font-semibold hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 min-h-[40px] px-3.5 py-1.5 rounded-md border border-red-200 dark:border-red-900 text-red-700 dark:text-red-400 text-xs font-semibold hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer disabled:opacity-50"
                 >
                   <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Flush All ({verifiedMedicines.length})</span>
+                  <span>Clear All ({verifiedMedicines.length})</span>
                 </button>
               )}
             </div>
@@ -742,13 +753,13 @@ export function CaregiverPage({
           {ttsError && (
             <div
               role="alert"
-              className="rounded-xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-4 py-3 text-sm font-semibold text-red-800 dark:text-red-200"
+              className="rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-4 py-3 text-sm font-semibold text-red-800 dark:text-red-200"
             >
               {ttsError}
             </div>
           )}
           {verifiedMedicines.length === 0 ? (
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-10 text-center space-y-2">
+            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-10 text-center space-y-2">
               <p className="font-display text-lg font-bold text-slate-900 dark:text-white">
                 No verified prescriptions for {shareCode}
               </p>
@@ -761,9 +772,9 @@ export function CaregiverPage({
             verifiedMedicines.map((med) => (
               <article
                 key={med.id}
-                className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 grid grid-cols-1 lg:grid-cols-12 gap-5 items-center"
+                className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 grid grid-cols-1 lg:grid-cols-12 gap-5 items-center"
               >
-                <div className="lg:col-span-3 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 aspect-[4/3]">
+                <div className="lg:col-span-3 rounded-md overflow-hidden border border-slate-200 dark:border-slate-800 aspect-[4/3]">
                   <StripImage
                     src={med.strip_image_url}
                     alt={`${med.medicine_name} strip`}
@@ -773,8 +784,8 @@ export function CaregiverPage({
                 </div>
 
                 <div className="lg:col-span-6 space-y-2">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-slate-500 dark:text-slate-400">
-                    <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 dark:text-emerald-400">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-slate-600 dark:text-slate-400">
+                    <span className="inline-flex items-center gap-1 font-semibold text-green-700 dark:text-green-400">
                       <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
                       Caregiver Verified
                     </span>
@@ -800,16 +811,17 @@ export function CaregiverPage({
                         <button
                           key={slotObj.slot}
                           type="button"
+                          aria-pressed={taken}
                           onClick={() => void onMarkDose(med.id, slotObj.slot, !taken)}
-                          className={`inline-flex items-center gap-1.5 min-h-[38px] px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
+                          className={`inline-flex items-center gap-1.5 min-h-[40px] px-3 py-1.5 rounded-md border text-xs font-semibold transition-colors cursor-pointer ${
                             taken
-                              ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300"
+                              ? "border-green-600 bg-green-50 dark:bg-green-950/40 text-green-800 dark:text-green-300"
                               : "border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300"
                           }`}
                         >
                           <CheckCircle2
                             className={`w-3.5 h-3.5 ${
-                              taken ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"
+                              taken ? "text-green-600 dark:text-green-400" : "text-slate-400"
                             }`}
                             aria-hidden="true"
                           />
@@ -822,11 +834,11 @@ export function CaregiverPage({
                   </div>
                 </div>
 
-                <div className="lg:col-span-3 flex lg:flex-col items-stretch justify-end gap-2.5">
+                <div className="lg:col-span-3 flex flex-col sm:flex-row lg:flex-col items-stretch justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => handlePreviewVoice(med)}
-                    className="flex-1 inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-slate-900 dark:text-white text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    className="flex-1 inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-slate-900 dark:text-white text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                   >
                     {speakingId === med.id ? (
                       <>
@@ -844,7 +856,7 @@ export function CaregiverPage({
                   <button
                     type="button"
                     onClick={() => void handleDeleteVerified(med.id)}
-                    className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-800 text-red-700 dark:text-red-400 text-sm font-semibold hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                    className="inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2 rounded-md border border-slate-200 dark:border-slate-800 text-red-700 dark:text-red-400 text-sm font-semibold hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
                   >
                     <Trash2 className="w-4 h-4" aria-hidden="true" />
                     <span>Remove</span>
@@ -858,7 +870,7 @@ export function CaregiverPage({
 
       {/* Tab 3: Emergency Contact Config */}
       {activeTab === "emergency" && (
-        <section className="max-w-2xl rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-5">
+        <section className="max-w-2xl rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 space-y-5">
           <div className="space-y-1">
             <h2 className="font-display text-xl font-bold text-slate-900 dark:text-white">
               Emergency Contact for Grandparents Mode
@@ -882,7 +894,7 @@ export function CaregiverPage({
                   onChange={(e) =>
                     setContactForm((prev) => ({ ...prev, name: e.target.value }))
                   }
-                  className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm"
                 />
               </label>
 
@@ -896,7 +908,7 @@ export function CaregiverPage({
                   onChange={(e) =>
                     setContactForm((prev) => ({ ...prev, relation: e.target.value }))
                   }
-                  className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm"
                 />
               </label>
             </div>
@@ -913,7 +925,7 @@ export function CaregiverPage({
                   onChange={(e) =>
                     setContactForm((prev) => ({ ...prev, phone: e.target.value }))
                   }
-                  className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm font-mono-data"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm font-mono-data"
                 />
               </label>
 
@@ -930,7 +942,7 @@ export function CaregiverPage({
                       whatsapp_phone: e.target.value,
                     }))
                   }
-                  className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm font-mono-data"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm font-mono-data"
                 />
               </label>
             </div>
@@ -938,13 +950,17 @@ export function CaregiverPage({
             <div className="flex items-center gap-4 pt-2">
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 min-h-[46px] px-6 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 dark:bg-teal-500 dark:hover:bg-teal-400 text-white dark:text-slate-950 text-sm font-bold transition-colors cursor-pointer"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-[46px] px-6 py-2.5 rounded-md bg-teal-700 hover:bg-teal-800 dark:bg-teal-500 dark:hover:bg-teal-400 text-white dark:text-slate-950 text-sm font-bold transition-colors cursor-pointer"
               >
                 <span>Save Emergency Contact</span>
               </button>
 
               {contactSaved && (
-                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                <span
+                  role="status"
+                  aria-live="polite"
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-green-700 dark:text-green-400"
+                >
                   <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
                   <span>Saved</span>
                 </span>

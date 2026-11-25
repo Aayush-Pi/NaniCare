@@ -17,11 +17,13 @@ import {
   MealRelation,
   ProfileInfo,
   ProfileSummaryResponse,
+  RefillStatusItem,
   SafetyFlagSummary,
   ScannedMedicineCandidate,
   ScanPrescriptionResponse,
   ScheduledSlot,
   ScheduleResponse,
+  StripVerifyResult,
   TimeSlotKey,
   VerifiedMedicine,
   VitalLogEntry,
@@ -1063,6 +1065,9 @@ export async function fetchProfileSummary(
       emergency_contact: schedule.emergency_contact,
       summary_text: String(raw.whatsapp_message ?? raw.summary_text ?? ""),
       whatsapp_url: String(raw.whatsapp_url ?? ""),
+      refill_alerts: Array.isArray(raw.refill_alerts)
+        ? raw.refill_alerts.map((r) => String(r)).filter(Boolean)
+        : [],
     };
   }
 
@@ -1095,5 +1100,58 @@ export async function fetchProfileSummary(
       vitals,
       emergencyContact
     ),
+    refill_alerts: [],
   };
+}
+
+/**
+ * POST /scan/verify-strip
+ * Matches a photographed blister strip against the elder's active verified schedule.
+ */
+export async function verifyMedicineStrip(params: {
+  shareCode: string;
+  file: File;
+}): Promise<StripVerifyResult> {
+  const normalizedCode = params.shareCode.trim().toUpperCase();
+  if (FASTAPI_BASE_URL) {
+    const formData = new FormData();
+    formData.append("share_code", normalizedCode);
+    formData.append("file", params.file);
+    const response = await fetch(`${FASTAPI_BASE_URL}/scan/verify-strip`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error("Could not verify medicine strip. Please try again.");
+    }
+    return (await response.json()) as StripVerifyResult;
+  }
+
+  return {
+    share_code: normalizedCode,
+    matched: false,
+    confidence: 0,
+    spoken_en: "Connect the backend server to verify medicine strips with camera.",
+    spoken_hi: "कैमरे से दवाई जांचने के लिए बैकएंड सर्वर कनेक्ट करें।",
+    spoken_mr: "कॅमेऱ्याने औषध तपासण्यासाठी बॅकएंड सर्व्हर कनेक्ट करा.",
+    warning: "Backend API not connected.",
+  };
+}
+
+/**
+ * GET /profile/{share_code}/refills
+ */
+export async function fetchRefills(shareCode: string): Promise<RefillStatusItem[]> {
+  const normalizedCode = shareCode.trim().toUpperCase();
+  if (!FASTAPI_BASE_URL) return [];
+  try {
+    const res = await fetch(
+      `${FASTAPI_BASE_URL}/profile/${encodeURIComponent(normalizedCode)}/refills`
+    );
+    if (!res.ok) return [];
+    const data = (await res.json()) as { items?: RefillStatusItem[] };
+    return Array.isArray(data.items) ? data.items : [];
+  } catch {
+    return [];
+  }
 }

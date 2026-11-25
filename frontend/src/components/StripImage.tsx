@@ -14,7 +14,7 @@ export function StripImage({ src, alt, title, className = "" }: StripImageProps)
   if (!src || failed) {
     return (
       <div
-        className={`flex flex-col items-center justify-center gap-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 p-4 text-center ${className}`}
+        className={`flex flex-col items-center justify-center gap-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 p-4 text-center ${className}`}
         role="img"
         aria-label={alt}
       >
@@ -24,13 +24,17 @@ export function StripImage({ src, alt, title, className = "" }: StripImageProps)
     );
   }
 
+  const isVectorSvg = src.startsWith("data:image/svg+xml");
+
   return (
     <img
       src={src}
       alt={alt}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
-      className={`object-cover ${className}`}
+      className={`${
+        isVectorSvg ? "object-contain bg-white dark:bg-slate-900 p-1.5" : "object-cover"
+      } ${className}`}
     />
   );
 }
