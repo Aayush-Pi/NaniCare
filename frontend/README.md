@@ -29,10 +29,15 @@ From this directory (`frontend/`):
 npm install
 ```
 
-Create a `.env` file in this directory and add your Gemini API key:
+Create a `.env` file in this directory (see `.env.example`):
 
 ```env
-GEMINI_API_KEY=your_gemini_api_key
+# Recommended: connect to FastAPI backend
+VITE_API_URL=http://localhost:8000
+
+# Optional: only needed in standalone Express preview mode (when VITE_API_URL is unset)
+# GEMINI_API_KEY=your_gemini_api_key
+# GEMINI_MODEL=gemini-3.5-flash
 ```
 
 Start the app and server together:
