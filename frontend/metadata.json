@@ -1,0 +1,6 @@
+{
+  "name": "NaniCare",
+  "description": "Caregiver-verified prescription scanner, visual pill-strip matcher, and high-contrast voice-first medication companion for elderly family members.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
