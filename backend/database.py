@@ -15,16 +15,15 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 logger = logging.getLogger("nanicare.database")
 
-# Load .env located next to backend files (or in current working directory)
-_ENV_PATH = Path(__file__).resolve().parent / ".env"
-load_dotenv(dotenv_path=_ENV_PATH if _ENV_PATH.exists() else None)
-
-_DEFAULT_SQLITE_PATH = Path(__file__).resolve().parent / "nanicare_local.db"
-_FALLBACK_SQLITE_URL = f"sqlite:///{_DEFAULT_SQLITE_PATH}"
-
-
-class Base(DeclarativeBase):
-    """SQLAlchemy 2.0 declarative base for all NaniCare ORM models."""
+# Load root Neon .env.local first (pulled by `neon deploy` / `neon env pull`), then fallback .env files.
+# Existing real environment variables (e.g. Render/Railway or pytest monkeypatch) always take precedence.
+_BACKEND_DIR = Path(__file__).resolve().parent
+_ROOT_DIR = _BACKEND_DIR.parent
+_ENV_CANDIDATES = (
+    _ROOT_DIR / ".env.local",
+    _ROOT_DIR / ".env",
+    _BACKEND_DIR / ".env",
+)
 
 
 def _is_placeholder_url(url: str) -> bool:
@@ -38,6 +37,21 @@ def _is_placeholder_url(url: str) -> bool:
             "placeholder",
         )
     )
+
+
+if _is_placeholder_url(os.getenv("DATABASE_URL", "")):
+    os.environ.pop("DATABASE_URL", None)
+
+for _env_file in _ENV_CANDIDATES:
+    if _env_file.exists():
+        load_dotenv(dotenv_path=_env_file, override=False)
+
+_DEFAULT_SQLITE_PATH = _BACKEND_DIR / "nanicare_local.db"
+_FALLBACK_SQLITE_URL = f"sqlite:///{_DEFAULT_SQLITE_PATH}"
+
+
+class Base(DeclarativeBase):
+    """SQLAlchemy 2.0 declarative base for all NaniCare ORM models."""
 
 
 def _normalize_database_url(raw_url: str | None) -> tuple[str, bool]:
@@ -75,6 +89,12 @@ def _normalize_database_url(raw_url: str | None) -> tuple[str, bool]:
 
 
 DATABASE_URL, IS_SQLITE = _normalize_database_url(os.getenv("DATABASE_URL"))
+_RAW_UNPOOLED_URL = os.getenv("DATABASE_URL_UNPOOLED")
+DATABASE_URL_UNPOOLED, _ = (
+    _normalize_database_url(_RAW_UNPOOLED_URL)
+    if (not IS_SQLITE and _RAW_UNPOOLED_URL and not _is_placeholder_url(_RAW_UNPOOLED_URL))
+    else (DATABASE_URL, IS_SQLITE)
+)
 
 
 def _build_engine(url: str, is_sqlite: bool) -> Engine:
@@ -84,6 +104,7 @@ def _build_engine(url: str, is_sqlite: bool) -> Engine:
             connect_args={"check_same_thread": False},
             future=True,
         )
+    # Neon PgBouncer handles large connection fan-out; keep SQLAlchemy pool compact with pre_ping
     return create_engine(
         url,
         pool_pre_ping=True,
@@ -115,14 +136,25 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Create all tables if they do not exist yet (idempotent)."""
+    """Create all tables idempotently, preferring Neon's unpooled direct connection for DDL."""
     # Import models inside init_db so metadata is always registered before create_all
     import models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    if not IS_SQLITE and DATABASE_URL_UNPOOLED != DATABASE_URL:
+        ddl_engine = create_engine(DATABASE_URL_UNPOOLED, pool_pre_ping=True, future=True)
+        try:
+            Base.metadata.create_all(bind=ddl_engine)
+        finally:
+            ddl_engine.dispose()
+    else:
+        Base.metadata.create_all(bind=engine)
+
+    branch = os.getenv("NEON_BRANCH")
     logger.info(
         "Database initialized (%s)",
-        "SQLite local fallback" if IS_SQLITE else "Neon PostgreSQL",
+        "SQLite local fallback"
+        if IS_SQLITE
+        else f"Neon PostgreSQL{f' [{branch}]' if branch else ''}",
     )
 
 

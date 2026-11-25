@@ -2,6 +2,8 @@
 
 > **A voice-first, Assistive Access–inspired medication safety companion for older adults — paired with an AI prescription verification gate and vitals dashboard for their families.**
 
+**Live App:** [https://nani-care.vercel.app](https://nani-care.vercel.app/) *(Demo Share Code: `DEMO01`)* · **Backend API Docs:** [https://nanicare.onrender.com/docs](https://nanicare.onrender.com/docs)
+
 **Jump to:**
 [Why NaniCare Is Needed](#why-nanicare-is-needed) · [How It Works](#how-it-works) · [Key Features](#key-features) · [Project Structure](#project-structure) · [Quick Start](#run-locally) · [API Reference](#backend-api-endpoints) · [Testing](#testing--verification) · [Deployment](#deployment--ci)
 

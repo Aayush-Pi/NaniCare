@@ -93,12 +93,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger("nanicare.engine")
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip() or "gemini-3.5-flash"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "auto").strip() or "auto"
 GEMINI_FALLBACK_MODELS: tuple[str, ...] = (
-    "gemini-3.8-flash",
-    "gemini-3.5-flash",
+    "gemini-flash-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-flash-lite-latest",
     "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-2.5-pro",
 )
+
+
+def _gemini_model_candidates() -> list[str]:
+    """Return ordered Gemini model names, skipping literal 'auto'."""
+    candidates: list[str] = []
+    if GEMINI_MODEL.lower() != "auto":
+        candidates.append(GEMINI_MODEL)
+    for model_name in GEMINI_FALLBACK_MODELS:
+        if model_name not in candidates:
+            candidates.append(model_name)
+    return candidates
 DEFAULT_SHARE_CODE = os.getenv("DEFAULT_SHARE_CODE", "DEMO01").strip().upper() or "DEMO01"
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024  # 12 MB max prescription image size
 
@@ -184,15 +199,12 @@ def _call_gemini_vision_with_fallback(
     mime_type: str,
     api_key: str,
 ) -> tuple[PrescriptionExtractionOutput, str, list[str]]:
-    """Try the configured Gemini model and fall back on transient/deprecated model errors."""
-    candidates: list[str] = []
-    for candidate in (GEMINI_MODEL, *GEMINI_FALLBACK_MODELS):
-        cleaned = candidate.strip()
-        if cleaned and cleaned not in candidates:
-            candidates.append(cleaned)
+    """Try the configured Gemini model (or auto list) and fall back on 404/429/503 errors."""
+    candidates = _gemini_model_candidates()
 
     last_exc: Exception | None = None
     extra_warnings: list[str] = []
+    is_auto = GEMINI_MODEL.lower() == "auto"
     for idx, model_name in enumerate(candidates):
         try:
             extraction = _call_gemini_vision(
@@ -201,7 +213,7 @@ def _call_gemini_vision_with_fallback(
                 api_key=api_key,
                 model_name=model_name,
             )
-            if idx > 0:
+            if idx > 0 and not is_auto:
                 extra_warnings.append(
                     f"Primary model '{candidates[0]}' was unavailable; extracted via '{model_name}'."
                 )
@@ -432,7 +444,7 @@ def _call_gemini_catalog_lookup(
         "Return generic_name, therapeutic_class, and a compact visual_spec "
         "(shape, primary_color hex, optional secondary_color hex, strip_accent hex, short imprint <=5 chars)."
     )
-    for model_name in ("gemini-3.5-flash-lite", GEMINI_MODEL, "gemini-3.5-flash"):
+    for model_name in _gemini_model_candidates():
         try:
             resp = client.models.generate_content(
                 model=model_name,
