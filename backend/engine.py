@@ -79,6 +79,7 @@ from schemas import (
 from visuals import (
     base_brand_root,
     default_visual_spec_for_form,
+    describe_visual_for_elder,
     load_seed_catalog,
     normalize_medicine_key,
     render_medicine_svg,
@@ -314,6 +315,38 @@ def _serialize_catalog_entry(
     )
 
 
+def _resolve_visual_spec_and_source(
+    db: Session | None,
+    brand_name: str,
+    generic_name: str | None,
+    dosage_form: str,
+    fallback_accent: str,
+    ai_shape: str | None = None,
+    ai_primary_hex: str | None = None,
+    ai_secondary_hex: str | None = None,
+    ai_accent_hex: str | None = None,
+) -> tuple[dict[str, Any], str, str | None]:
+    """Resolve compact VisualSpec, visual_source, and generic_name via 3-tier lookup."""
+    entry = _find_catalog_entry(db, brand_name, generic_name)
+    if entry is not None:
+        spec = dict(entry.visual_spec or default_visual_spec_for_form(dosage_form or entry.dosage_form, fallback_accent))
+        return spec, "catalog_verified", generic_name or entry.generic_name
+
+    if ai_shape or ai_primary_hex or ai_accent_hex:
+        spec = default_visual_spec_for_form(dosage_form, ai_accent_hex or fallback_accent)
+        if ai_shape:
+            spec["shape"] = ai_shape
+        if ai_primary_hex:
+            spec["primary_color"] = sanitize_hex(ai_primary_hex, spec["primary_color"])
+        if ai_secondary_hex:
+            spec["secondary_color"] = sanitize_hex(ai_secondary_hex, "#FFFFFF")
+        if ai_accent_hex:
+            spec["strip_accent"] = sanitize_hex(ai_accent_hex, fallback_accent)
+        return spec, "ai_inferred", generic_name
+
+    return default_visual_spec_for_form(dosage_form, fallback_accent), "generic_fallback", generic_name
+
+
 def _resolve_medicine_visual(
     db: Session | None,
     brand_name: str,
@@ -328,53 +361,30 @@ def _resolve_medicine_visual(
     ai_primary_hex: str | None = None,
     ai_secondary_hex: str | None = None,
     ai_accent_hex: str | None = None,
-) -> tuple[str, str, str | None]:
-    """3-Tier token-efficient visual resolver returning (data_uri, visual_source, resolved_generic)."""
+) -> tuple[str, str, str | None, dict[str, Any]]:
+    """3-Tier token-efficient visual resolver returning (data_uri, visual_source, resolved_generic, spec)."""
+    spec, visual_source, resolved_generic = _resolve_visual_spec_and_source(
+        db=db,
+        brand_name=brand_name,
+        generic_name=generic_name,
+        dosage_form=dosage_form,
+        fallback_accent=fallback_accent,
+        ai_shape=ai_shape,
+        ai_primary_hex=ai_primary_hex,
+        ai_secondary_hex=ai_secondary_hex,
+        ai_accent_hex=ai_accent_hex,
+    )
     if source_type == "blister_strip" and uploaded_thumbnail and single_medicine:
-        return uploaded_thumbnail, "uploaded_strip", generic_name
+        return uploaded_thumbnail, "uploaded_strip", resolved_generic, spec
 
-    # Tier 1: Local DB catalog hit (0 AI tokens)
-    entry = _find_catalog_entry(db, brand_name, generic_name)
-    if entry is not None:
-        svg = render_medicine_svg(
-            brand_name=brand_name,
-            strength=strength,
-            visual_spec=entry.visual_spec,
-            dosage_form=dosage_form or entry.dosage_form,
-            fallback_accent=fallback_accent,
-        )
-        return svg, "catalog_verified", generic_name or entry.generic_name
-
-    # Tier 2: Piggybacked compact visual hint from Gemini Vision scan (~15-20 tokens)
-    if ai_shape or ai_primary_hex or ai_accent_hex:
-        spec = default_visual_spec_for_form(dosage_form, ai_accent_hex or fallback_accent)
-        if ai_shape:
-            spec["shape"] = ai_shape
-        if ai_primary_hex:
-            spec["primary_color"] = sanitize_hex(ai_primary_hex, spec["primary_color"])
-        if ai_secondary_hex:
-            spec["secondary_color"] = sanitize_hex(ai_secondary_hex, "#FFFFFF")
-        if ai_accent_hex:
-            spec["strip_accent"] = sanitize_hex(ai_accent_hex, fallback_accent)
-        svg = render_medicine_svg(
-            brand_name=brand_name,
-            strength=strength,
-            visual_spec=spec,
-            dosage_form=dosage_form,
-            fallback_accent=fallback_accent,
-        )
-        return svg, "ai_inferred", generic_name
-
-    # Tier 3: Deterministic zero-token generic vector fallback
-    fallback_spec = default_visual_spec_for_form(dosage_form, fallback_accent)
     svg = render_medicine_svg(
         brand_name=brand_name,
         strength=strength,
-        visual_spec=fallback_spec,
+        visual_spec=spec,
         dosage_form=dosage_form,
         fallback_accent=fallback_accent,
     )
-    return svg, "generic_fallback", generic_name
+    return svg, visual_source, resolved_generic, spec
 
 
 def _upsert_catalog_on_confirm(db: Session, med: Medicine) -> None:
@@ -501,18 +511,8 @@ def _enrich_extraction(
         else:
             highlight = "none"
 
-        scripts = build_multilingual_instructions(
-            brand_name=med.brand_name,
-            strength=med.strength,
-            dosage_form=med.dosage_form,
-            meal_relation=effective_meal,
-            schedule_slots=slots,
-            as_needed=as_needed,
-            frequency_notes=med.frequency_notes,
-        )
-
         color_tag = pick_pill_color_tag(slots, as_needed)
-        strip_thumb, visual_source, resolved_generic = _resolve_medicine_visual(
+        strip_thumb, visual_source, resolved_generic, visual_spec = _resolve_medicine_visual(
             db=db,
             brand_name=med.brand_name,
             generic_name=med.generic_name,
@@ -526,6 +526,22 @@ def _enrich_extraction(
             ai_primary_hex=med.pill_color_hex,
             ai_secondary_hex=med.pill_secondary_color_hex,
             ai_accent_hex=med.strip_accent_hex,
+        )
+        visual_desc = describe_visual_for_elder(
+            visual_spec=visual_spec,
+            dosage_form=med.dosage_form,
+            strength=med.strength,
+        )
+
+        scripts = build_multilingual_instructions(
+            brand_name=med.brand_name,
+            strength=med.strength,
+            dosage_form=med.dosage_form,
+            meal_relation=effective_meal,
+            schedule_slots=slots,
+            as_needed=as_needed,
+            frequency_notes=med.frequency_notes,
+            visual_desc=visual_desc,
         )
 
         enriched.append(
@@ -688,6 +704,18 @@ def _build_schedule_for_profile(
         raw_slots = med.schedule_slots or []
         slots = [ScheduleSlot.model_validate(s) for s in raw_slots]
         flags = [SafetyFlag.model_validate(f) for f in (med.safety_flags or [])]
+        med_spec, _, _ = _resolve_visual_spec_and_source(
+            db=db,
+            brand_name=med.brand_name,
+            generic_name=med.generic_name,
+            dosage_form=med.dosage_form,
+            fallback_accent=med.pill_color_tag,
+        )
+        visual_desc = describe_visual_for_elder(
+            visual_spec=med_spec,
+            dosage_form=med.dosage_form,
+            strength=med.strength,
+        )
 
         for slot in slots:
             log = log_lookup.get((med.id, slot.slot))
@@ -705,6 +733,7 @@ def _build_schedule_for_profile(
                 meal_relation=med.meal_relation,  # type: ignore[arg-type]
                 slot=slot,
                 language=active_lang,
+                visual_desc=visual_desc,
             )
 
             card = NaniScheduleCard(
@@ -810,6 +839,20 @@ def _seed_demo_profile(db: Session, reset: bool = False) -> Profile:
             brand_name=item["brand_name"],
             generic_name=item.get("generic_name"),
         )
+        color_tag = pick_pill_color_tag(slots, as_needed)
+        med_thumb, _, _, med_spec = _resolve_medicine_visual(
+            db=db,
+            brand_name=item["brand_name"],
+            generic_name=item.get("generic_name"),
+            strength=item.get("strength"),
+            dosage_form=item["dosage_form"],
+            fallback_accent=color_tag,
+        )
+        visual_desc = describe_visual_for_elder(
+            visual_spec=med_spec,
+            dosage_form=item["dosage_form"],
+            strength=item.get("strength"),
+        )
         scripts = build_multilingual_instructions(
             brand_name=item["brand_name"],
             strength=item.get("strength"),
@@ -817,6 +860,7 @@ def _seed_demo_profile(db: Session, reset: bool = False) -> Profile:
             meal_relation=effective_meal,
             schedule_slots=slots,
             as_needed=as_needed,
+            visual_desc=visual_desc,
         )
         med = Medicine(
             profile_id=profile.id,
@@ -832,8 +876,8 @@ def _seed_demo_profile(db: Session, reset: bool = False) -> Profile:
             instructions_en=scripts["en"],
             instructions_hi=scripts["hi"],
             instructions_mr=scripts["mr"],
-            strip_thumbnail=item.get("strip_thumbnail"),
-            pill_color_tag=pick_pill_color_tag(slots, as_needed),
+            strip_thumbnail=item.get("strip_thumbnail") or med_thumb,
+            pill_color_tag=color_tag,
             confidence=item.get("confidence", 0.95),
             needs_review=False,
             safety_flags=[f.model_dump() for f in per_med_flags.get(idx, [])],
@@ -1329,6 +1373,25 @@ def confirm_medicines(
             brand_name=item.brand_name,
             generic_name=item.generic_name,
         )
+        color_tag = item.pill_color_tag or pick_pill_color_tag(slots, as_needed)
+        resolved_thumb = item.strip_thumbnail
+        resolved_generic = item.generic_name.strip() if item.generic_name else None
+        computed_thumb, _, resolved_generic, resolved_spec = _resolve_medicine_visual(
+            db=db,
+            brand_name=item.brand_name.strip(),
+            generic_name=resolved_generic,
+            strength=item.strength.strip() if item.strength else None,
+            dosage_form=item.dosage_form,
+            fallback_accent=color_tag,
+            source_type="prescription",
+        )
+        if not resolved_thumb:
+            resolved_thumb = computed_thumb
+        visual_desc = describe_visual_for_elder(
+            visual_spec=resolved_spec,
+            dosage_form=item.dosage_form,
+            strength=item.strength,
+        )
         generated_scripts = build_multilingual_instructions(
             brand_name=item.brand_name,
             strength=item.strength,
@@ -1336,21 +1399,8 @@ def confirm_medicines(
             meal_relation=effective_meal,
             schedule_slots=slots,
             as_needed=as_needed,
+            visual_desc=visual_desc,
         )
-
-        color_tag = item.pill_color_tag or pick_pill_color_tag(slots, as_needed)
-        resolved_thumb = item.strip_thumbnail
-        resolved_generic = item.generic_name.strip() if item.generic_name else None
-        if not resolved_thumb:
-            resolved_thumb, _, resolved_generic = _resolve_medicine_visual(
-                db=db,
-                brand_name=item.brand_name.strip(),
-                generic_name=resolved_generic,
-                strength=item.strength.strip() if item.strength else None,
-                dosage_form=item.dosage_form,
-                fallback_accent=color_tag,
-                source_type="prescription",
-            )
 
         med = Medicine(
             profile_id=profile.id,
@@ -1465,6 +1515,18 @@ def update_medicine(
         {"brand_name", "strength", "dosage_form", "dosage_pattern", "meal_relation"} & updates.keys()
     )
     if schedule_changed:
+        med_spec, _, _ = _resolve_visual_spec_and_source(
+            db=db,
+            brand_name=med.brand_name,
+            generic_name=med.generic_name,
+            dosage_form=med.dosage_form,
+            fallback_accent=med.pill_color_tag,
+        )
+        visual_desc = describe_visual_for_elder(
+            visual_spec=med_spec,
+            dosage_form=med.dosage_form,
+            strength=med.strength,
+        )
         generated = build_multilingual_instructions(
             brand_name=med.brand_name,
             strength=med.strength,
@@ -1472,6 +1534,7 @@ def update_medicine(
             meal_relation=effective_meal,
             schedule_slots=slots,
             as_needed=as_needed,
+            visual_desc=visual_desc,
         )
     else:
         generated = {}
@@ -2220,6 +2283,18 @@ async def verify_medicine_strip(
         slot_en = ", ".join(f"{s.label_en} ({s.time})" for s in slots) or "as advised"
         slot_hi = ", ".join(s.label_hi for s in slots) or "डॉक्टर की सलाह अनुसार"
         slot_mr = ", ".join(s.label_mr for s in slots) or "डॉक्टरांच्या सल्ल्यानुसार"
+        med_spec, _, _ = _resolve_visual_spec_and_source(
+            db=db,
+            brand_name=best_match.brand_name,
+            generic_name=best_match.generic_name,
+            dosage_form=best_match.dosage_form,
+            fallback_accent=best_match.pill_color_tag,
+        )
+        v_desc = describe_visual_for_elder(
+            visual_spec=med_spec,
+            dosage_form=best_match.dosage_form,
+            strength=best_match.strength,
+        )
         return StripVerifyResponse(
             share_code=profile.share_code,
             matched=True,
@@ -2229,15 +2304,15 @@ async def verify_medicine_strip(
             matched_medicine=_serialize_medicine(best_match),
             next_slot_label=slot_en,
             spoken_en=(
-                f"Yes {profile.elder_name}, this is your verified medicine {best_match.brand_name} "
+                f"Yes {profile.elder_name}, this is the {v_desc['en']} of {best_match.brand_name} "
                 f"{best_match.strength or ''}. Scheduled for: {slot_en}."
             ).replace("  ", " "),
             spoken_hi=(
-                f"हाँ {profile.elder_name}, यह आपकी सत्यापित दवाई {best_match.brand_name} है। "
+                f"हाँ {profile.elder_name}, यह {best_match.brand_name} की {v_desc['hi']} है। "
                 f"इसे {slot_hi} लेना है।"
             ),
             spoken_mr=(
-                f"होय {profile.elder_name}, हे तुमचे प्रमाणित औषध {best_match.brand_name} आहे. "
+                f"होय {profile.elder_name}, ही {best_match.brand_name} ची {v_desc['mr']} आहे. "
                 f"हे {slot_mr} घ्यायचे आहे."
             ),
         )
