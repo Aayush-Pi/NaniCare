@@ -47,6 +47,7 @@ from schemas import (
     MedicineResponse,
     MedicinesConfirmRequest,
     MedicinesConfirmResponse,
+    MedicinesFlushResponse,
     MedicineUpdateRequest,
     NaniScheduleCard,
     NaniScheduleResponse,
@@ -914,9 +915,7 @@ def create_or_update_profile(
     )
 
 
-@app.get("/profile/{share_code}", response_model=ProfileResponse, tags=["Profiles"])
-def get_profile(share_code: str, db: Session = Depends(get_db)) -> ProfileResponse:
-    profile = _get_profile_or_404(db, share_code)
+def _serialize_profile(profile: Profile) -> ProfileResponse:
     active_count = len([m for m in profile.medicines if m.is_active])
     return ProfileResponse(
         id=profile.id,
@@ -931,6 +930,33 @@ def get_profile(share_code: str, db: Session = Depends(get_db)) -> ProfileRespon
         created_at=profile.created_at,
         updated_at=profile.updated_at,
     )
+
+
+def _deactivate_profile_medicines(db: Session, profile_id: int) -> int:
+    """Soft-deactivate all currently active medicines for a profile."""
+    existing_active = list(
+        db.scalars(
+            select(Medicine).where(
+                and_(Medicine.profile_id == profile_id, Medicine.is_active.is_(True))
+            )
+        )
+    )
+    for med in existing_active:
+        med.is_active = False
+    return len(existing_active)
+
+
+@app.get("/profiles", response_model=list[ProfileResponse], tags=["Profiles"])
+def list_profiles(db: Session = Depends(get_db)) -> list[ProfileResponse]:
+    """List all elder profiles so caregivers can switch between profiles or create new ones."""
+    profiles = list(db.scalars(select(Profile).order_by(Profile.id.asc())))
+    return [_serialize_profile(p) for p in profiles]
+
+
+@app.get("/profile/{share_code}", response_model=ProfileResponse, tags=["Profiles"])
+def get_profile(share_code: str, db: Session = Depends(get_db)) -> ProfileResponse:
+    profile = _get_profile_or_404(db, share_code)
+    return _serialize_profile(profile)
 
 
 # =============================================================================
@@ -999,15 +1025,7 @@ def confirm_medicines(
             profile.caregiver_phone = payload.caregiver_phone
 
     if payload.replace_existing:
-        existing_active = list(
-            db.scalars(
-                select(Medicine).where(
-                    and_(Medicine.profile_id == profile.id, Medicine.is_active.is_(True))
-                )
-            )
-        )
-        for med in existing_active:
-            med.is_active = False
+        _deactivate_profile_medicines(db, profile.id)
 
     new_models: list[Medicine] = []
     for item in payload.medicines:
@@ -1177,6 +1195,26 @@ def deactivate_medicine(
     med.is_active = False
     db.commit()
     return {"deleted": True, "medicine_id": medicine_id, "brand_name": med.brand_name}
+
+
+@app.delete(
+    "/profile/{share_code}/medicines",
+    response_model=MedicinesFlushResponse,
+    tags=["Caregiver Mode"],
+)
+def flush_profile_medicines(
+    share_code: str,
+    db: Session = Depends(get_db),
+) -> MedicinesFlushResponse:
+    """Flush (deactivate) all active medicines for a share_code so schedules can start fresh."""
+    profile = _get_profile_or_404(db, share_code)
+    count = _deactivate_profile_medicines(db, profile.id)
+    db.commit()
+    return MedicinesFlushResponse(
+        flushed=True,
+        share_code=profile.share_code,
+        deactivated_count=count,
+    )
 
 
 # =============================================================================

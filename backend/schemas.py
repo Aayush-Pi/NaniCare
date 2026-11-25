@@ -327,6 +327,12 @@ class MedicinesConfirmResponse(BaseModel):
     regimen_safety_flags: list[SafetyFlag] = Field(default_factory=list)
 
 
+class MedicinesFlushResponse(BaseModel):
+    flushed: bool
+    share_code: str
+    deactivated_count: int
+
+
 # =============================================================================
 # 4. Nani Mode Schedule & Dose Marking Schemas
 # =============================================================================
