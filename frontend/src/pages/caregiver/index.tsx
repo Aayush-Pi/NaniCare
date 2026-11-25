@@ -86,6 +86,7 @@ export function CaregiverPage({
   const [isConfirming, setIsConfirming] = useState(false);
   const [publishNotice, setPublishNotice] = useState("");
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [ttsError, setTtsError] = useState("");
 
   const [contactForm, setContactForm] = useState<EmergencyContact>(emergencyContact);
   const [contactSaved, setContactSaved] = useState(false);
@@ -240,11 +241,18 @@ export function CaregiverPage({
       setSpeakingId(null);
       return;
     }
+    setTtsError("");
     const text = getMedicineSpokenText(med, language);
     speakText(text, language, {
-      onStart: () => setSpeakingId(med.id),
+      onStart: () => {
+        setTtsError("");
+        setSpeakingId(med.id);
+      },
       onEnd: () => setSpeakingId(null),
-      onError: () => setSpeakingId(null),
+      onError: (message) => {
+        setSpeakingId(null);
+        setTtsError(message);
+      },
     });
   }
 
@@ -454,6 +462,14 @@ export function CaregiverPage({
       {/* Tab 2: Live Verified Schedule */}
       {activeTab === "verified" && (
         <section className="space-y-4">
+          {ttsError && (
+            <div
+              role="alert"
+              className="rounded-xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-4 py-3 text-sm font-semibold text-red-800 dark:text-red-200"
+            >
+              {ttsError}
+            </div>
+          )}
           {verifiedMedicines.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-10 text-center space-y-2">
               <p className="font-display text-lg font-bold text-slate-900 dark:text-white">

@@ -153,6 +153,7 @@ export function NaniPage({
   const [speakingMedId, setSpeakingMedId] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [voiceFeedback, setVoiceFeedback] = useState("");
+  const [ttsError, setTtsError] = useState("");
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -176,6 +177,10 @@ export function NaniPage({
     );
   }, [strictlyVerified, selectedSlot]);
 
+  useEffect(() => {
+    setTtsError("");
+  }, [language]);
+
   function handleSpeakSlot(slotToRead: TimeSlotKey | "All") {
     if (isSpeaking && !speakingMedId) {
       stopSpeaking();
@@ -183,9 +188,11 @@ export function NaniPage({
       return;
     }
 
+    setTtsError("");
     const script = buildVerifiedSlotSpeech(strictlyVerified, slotToRead, language);
     speakText(script, language, {
       onStart: () => {
+        setTtsError("");
         setIsSpeaking(true);
         setSpeakingMedId(null);
       },
@@ -193,9 +200,10 @@ export function NaniPage({
         setIsSpeaking(false);
         setSpeakingMedId(null);
       },
-      onError: () => {
+      onError: (message) => {
         setIsSpeaking(false);
         setSpeakingMedId(null);
+        setTtsError(message);
       },
     });
   }
@@ -210,9 +218,11 @@ export function NaniPage({
       return;
     }
 
+    setTtsError("");
     const text = getMedicineSpokenText(med, language);
     speakText(text, language, {
       onStart: () => {
+        setTtsError("");
         setIsSpeaking(true);
         setSpeakingMedId(med.id);
       },
@@ -220,9 +230,10 @@ export function NaniPage({
         setIsSpeaking(false);
         setSpeakingMedId(null);
       },
-      onError: () => {
+      onError: (message) => {
         setIsSpeaking(false);
         setSpeakingMedId(null);
+        setTtsError(message);
       },
     });
   }
@@ -552,6 +563,14 @@ export function NaniPage({
         </div>
 
         <div className="space-y-3 pt-1">
+          {ttsError && (
+            <p
+              role="alert"
+              className="rounded-xl border-2 border-red-600 bg-red-50 dark:bg-red-950/50 px-4 py-3 text-sm sm:text-base font-bold text-red-800 dark:text-red-200"
+            >
+              {ttsError}
+            </p>
+          )}
           {voiceFeedback && (
             <p
               role="status"
