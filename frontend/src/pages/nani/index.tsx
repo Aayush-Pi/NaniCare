@@ -1,29 +1,20 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertOctagon,
-  Camera,
-  Check,
-  CheckCircle2,
-  Contrast,
   KeyRound,
-  Loader2,
   MessageCircle,
   Mic,
   MicOff,
   PhoneCall,
   ShieldCheck,
-  Type,
   Volume2,
   VolumeX,
   X,
 } from "lucide-react";
 import { NaniMedicineCard } from "../../components/NaniMedicineCard";
 import { LANGUAGES } from "../../config";
-import { verifyMedicineStrip } from "../../lib/api";
 import {
   EmergencyContact,
   LanguageCode,
-  StripVerifyResult,
   TimeSlotKey,
   VerifiedMedicine,
 } from "../../types/api";
@@ -31,6 +22,7 @@ import { getCurrentTimeSlot, SLOT_LOCALIZED_LABELS } from "../../utils/scheduler
 import {
   buildVerifiedSlotSpeech,
   getMedicineSpokenText,
+  prefetchSpeech,
   speakText,
   stopSpeaking,
 } from "../../utils/tts";
@@ -62,8 +54,6 @@ interface WindowWithSpeech extends Window {
   webkitSpeechRecognition?: SpeechRecognitionCtor;
 }
 
-type ElderTextScale = "normal" | "lg" | "xl";
-
 interface NaniPageProps {
   shareCode: string;
   onChangeShareCode: (code: string) => void;
@@ -88,16 +78,13 @@ const UI_COPY: Record<
     listenOne: string;
     takeAction: string;
     takenDone: string;
-    pendingLabel: string;
-    tableHeading: string;
-    checkStrip: string;
     emergencyButton: string;
     noVerified: string;
   }
 > = {
   en: {
     safetyTitle: "Caregiver-Verified Voiceover Only",
-    heading: "My Medicines Today",
+    heading: "My Verified Medicines",
     readAll: "Read My Medicines Aloud",
     stopVoice: "Stop Voice",
     tapSpeak: "Tap & Speak Command",
@@ -105,46 +92,37 @@ const UI_COPY: Record<
     allToday: "All Today",
     listenOne: "Listen",
     takeAction: "I Took This",
-    takenDone: "Done · Taken",
-    pendingLabel: "Pending",
-    tableHeading: "Today's Dose Checklist",
-    checkStrip: "Check Pill Strip (Camera)",
+    takenDone: "Taken",
     emergencyButton: "Emergency Call",
     noVerified:
       "No caregiver-verified prescriptions found for this share code yet. Ask your caregiver to confirm your schedule first.",
   },
   hi: {
     safetyTitle: "केवल देखभालकर्ता द्वारा सत्यापित दवाइयाँ",
-    heading: "आज की मेरी दवाइयाँ",
-    readAll: "दवाइयाँ बोलकर सुनाएँ",
+    heading: "मेरी सत्यापित दवाइयाँ",
+    readAll: "मेरी दवाइयाँ बोलकर सुनाएँ",
     stopVoice: "आवाज़ बंद करें",
     tapSpeak: "दबाकर बोलें",
     listeningNow: "सुन रहा हूँ... बोलें: सुबह, रात, दवाई ली, या मदद",
     allToday: "आज की सभी",
     listenOne: "सुनें",
-    takeAction: "दवाई ले ली",
+    takeAction: "मैंने ले ली",
     takenDone: "ले ली गई",
-    pendingLabel: "बाकी है",
-    tableHeading: "आज की दवाई तालिका",
-    checkStrip: "पट्टी की फोटो से जांचें",
     emergencyButton: "आपातकालीन कॉल",
     noVerified:
       "इस शेयर कोड के लिए अभी कोई सत्यापित दवाई नहीं मिली है। कृपया देखभालकर्ता से पहले सत्यापन करवाएँ।",
   },
   mr: {
     safetyTitle: "फक्त काळजीवाहकांनी प्रमाणित केलेली औषधे",
-    heading: "आजची माझी औषधे",
-    readAll: "औषधे वाचून दाखवा",
+    heading: "माझी प्रमाणित औषधे",
+    readAll: "माझी औषधे वाचून दाखवा",
     stopVoice: "आवाज थांबवा",
     tapSpeak: "दाबून बोला",
     listeningNow: "ऐकत आहे... बोला: सकाळ, रात्र, औषध घेतले, किंवा मदत",
     allToday: "आजची सर्व",
     listenOne: "ऐका",
-    takeAction: "औषध घेतले",
+    takeAction: "मी घेतले",
     takenDone: "घेतले आहे",
-    pendingLabel: "शिल्लक",
-    tableHeading: "आजची औषध यादी",
-    checkStrip: "पट्टीचा फोटो तपासा",
     emergencyButton: "तातडीचा कॉल",
     noVerified:
       "या शेअर कोडसाठी अजून कोणतेही प्रमाणित औषध नाही. कृपया काळजीवाहकांना आधी प्रमाणित करण्यास सांगा.",
@@ -161,6 +139,7 @@ export function NaniPage({
   onMarkDose,
   onSwitchToCaregiver,
 }: NaniPageProps) {
+  // Strictly allow ONLY caregiver-verified medicines to appear or be spoken
   const strictlyVerified = useMemo(
     () => verifiedMedicines.filter((med) => med.caregiver_verified === true),
     [verifiedMedicines]
@@ -169,22 +148,6 @@ export function NaniPage({
   const [selectedSlot, setSelectedSlot] = useState<TimeSlotKey | "All">(() =>
     getCurrentTimeSlot()
   );
-  const [textScale, setTextScale] = useState<ElderTextScale>(() => {
-    try {
-      const saved = window.localStorage.getItem("nanicare_elder_scale");
-      if (saved === "lg" || saved === "xl") return saved;
-    } catch {
-      // Ignore storage access errors
-    }
-    return "lg";
-  });
-  const [highContrast, setHighContrast] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem("nanicare_elder_hc") === "true";
-    } catch {
-      return false;
-    }
-  });
   const [codeDraft, setCodeDraft] = useState(shareCode);
   const [showCodeSwitcher, setShowCodeSwitcher] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -194,10 +157,6 @@ export function NaniPage({
   const [ttsError, setTtsError] = useState("");
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
 
-  const [isVerifyingStrip, setIsVerifyingStrip] = useState(false);
-  const [stripResult, setStripResult] = useState<StripVerifyResult | null>(null);
-  const stripInputRef = useRef<HTMLInputElement | null>(null);
-
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const copy = UI_COPY[language];
 
@@ -206,79 +165,33 @@ export function NaniPage({
   }, [shareCode]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem("nanicare_elder_scale", textScale);
-    } catch {
-      // Ignore storage errors
-    }
-  }, [textScale]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem("nanicare_elder_hc", String(highContrast));
-    } catch {
-      // Ignore storage errors
-    }
-  }, [highContrast]);
-
-  useEffect(() => {
-    function handleEsc(event: KeyboardEvent) {
-      if (event.key === "Escape" && showEmergencyModal) {
-        setShowEmergencyModal(false);
-      }
-    }
-    window.addEventListener("keydown", handleEsc);
-    return () => window.removeEventListener("keydown", handleEsc);
-  }, [showEmergencyModal]);
-
-  useEffect(() => {
     return () => {
       stopSpeaking();
       recognitionRef.current?.stop();
     };
   }, []);
 
-  // Build flat checklist rows (one row per scheduled medicine + slot) for the live dose table
-  const doseRows = useMemo(() => {
-    const slotOrder: Record<TimeSlotKey, number> = { Morning: 0, Afternoon: 1, Night: 2 };
-    const rows: Array<{
-      key: string;
-      medicine: VerifiedMedicine;
-      slot: TimeSlotKey;
-      timeLabel: string;
-      taken: boolean;
-    }> = [];
-    for (const med of strictlyVerified) {
-      for (const s of med.slots) {
-        rows.push({
-          key: `${med.id}-${s.slot}`,
-          medicine: med,
-          slot: s.slot,
-          timeLabel: s.time_label,
-          taken: med.taken_slots_today.includes(s.slot),
-        });
-      }
-    }
-    rows.sort((a, b) => slotOrder[a.slot] - slotOrder[b.slot]);
-    return rows;
-  }, [strictlyVerified]);
-
-  const totalDosesToday = doseRows.length;
-  const takenDosesToday = doseRows.filter((r) => r.taken).length;
-  const progressPercent =
-    totalDosesToday > 0 ? Math.round((takenDosesToday / totalDosesToday) * 100) : 0;
-
   const visibleMedicines = useMemo(() => {
     if (selectedSlot === "All") return strictlyVerified;
     return strictlyVerified.filter((med) =>
-      med.slots.some((s) => s.slot === selectedSlot)
+      med.slots.some((slotObj) => slotObj.slot === selectedSlot)
     );
-  }, [selectedSlot, strictlyVerified]);
+  }, [strictlyVerified, selectedSlot]);
 
-  const visibleTableRows = useMemo(() => {
-    if (selectedSlot === "All") return doseRows;
-    return doseRows.filter((r) => r.slot === selectedSlot);
-  }, [doseRows, selectedSlot]);
+  useEffect(() => {
+    setTtsError("");
+  }, [language]);
+
+  // Pre-warm neural TTS audio in the background so tapping Listen plays immediately.
+  useEffect(() => {
+    if (strictlyVerified.length === 0) return;
+    const slotScript = buildVerifiedSlotSpeech(strictlyVerified, selectedSlot, language);
+    prefetchSpeech(slotScript, language);
+    for (const med of visibleMedicines.slice(0, 6)) {
+      const medText = getMedicineSpokenText(med, language);
+      if (medText) prefetchSpeech(medText, language);
+    }
+  }, [strictlyVerified, visibleMedicines, selectedSlot, language]);
 
   function handleSpeakSlot(slotToRead: TimeSlotKey | "All") {
     if (isSpeaking && !speakingMedId) {
@@ -348,41 +261,10 @@ export function NaniPage({
           : language === "mr"
           ? `${med.medicine_name} घेतले म्हणून नोंदवले आहे. छान.`
           : `Marked ${med.medicine_name} as taken. Well done.`;
-      setVoiceFeedback(confirmMsg);
       speakText(confirmMsg, language, {
         onStart: () => setIsSpeaking(true),
         onEnd: () => setIsSpeaking(false),
       });
-    }
-  }
-
-  async function handleStripVerifyFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-
-    setIsVerifyingStrip(true);
-    setStripResult(null);
-    setTtsError("");
-    try {
-      const result = await verifyMedicineStrip({ shareCode, file });
-      setStripResult(result);
-      const spoken =
-        language === "hi"
-          ? result.spoken_hi
-          : language === "mr"
-          ? result.spoken_mr
-          : result.spoken_en;
-      if (spoken) {
-        speakText(spoken, language, {
-          onStart: () => setIsSpeaking(true),
-          onEnd: () => setIsSpeaking(false),
-        });
-      }
-    } catch (err: unknown) {
-      setTtsError(err instanceof Error ? err.message : "Could not check pill strip.");
-    } finally {
-      setIsVerifyingStrip(false);
     }
   }
 
@@ -494,7 +376,7 @@ export function NaniPage({
 
     if (!RecognitionCtor) {
       setVoiceFeedback(
-        "Voice microphone is not supported in this browser. Use the large buttons below."
+        "Voice microphone is not supported in this browser. Tap any quick voice button below."
       );
       return;
     }
@@ -515,7 +397,9 @@ export function NaniPage({
       recognition.onend = () => setIsListening(false);
       recognition.onerror = () => {
         setIsListening(false);
-        setVoiceFeedback("Could not access microphone. Use the large buttons below.");
+        setVoiceFeedback(
+          "Could not access microphone. Tap any large quick voice prompt below."
+        );
       };
       recognition.onresult = (event) => {
         const transcript = event.results?.[0]?.[0]?.transcript || "";
@@ -528,7 +412,7 @@ export function NaniPage({
       recognition.start();
     } catch {
       setIsListening(false);
-      setVoiceFeedback("Microphone unavailable. Use the large buttons below.");
+      setVoiceFeedback("Microphone unavailable. Use the large voice buttons below.");
     }
   }
 
@@ -551,117 +435,27 @@ export function NaniPage({
   const cleanTelHref = `tel:${emergencyContact.phone.replace(/[^\d+]/g, "")}`;
   const emergencyWhatsAppHref = buildEmergencyWhatsAppUrl(emergencyContact);
 
-  const scaleClass =
-    textScale === "xl" ? "elder-scale-xl" : textScale === "lg" ? "elder-scale-lg" : "";
-
   return (
-    <main
-      id="main-content"
-      className={`max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 pb-24 md:pb-16 space-y-6 ${scaleClass} ${
-        highContrast ? "elder-high-contrast" : ""
-      }`}
-    >
-      {/* Elder Accessibility Toolbar: Text Size + AAA High Contrast + Share Code */}
-      <section
-        aria-label="Accessibility display controls"
-        className={`rounded-lg border-2 p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3 ${
-          highContrast
-            ? "border-black dark:border-yellow-300 bg-white dark:bg-black"
-            : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
-        }`}
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200 mr-1">
-            <Type className="w-4 h-4" aria-hidden="true" />
-            <span>Text Size:</span>
-          </span>
-          {(
-            [
-              { key: "normal", label: "A" },
-              { key: "lg", label: "A+" },
-              { key: "xl", label: "A++" },
-            ] as const
-          ).map((opt) => (
+    <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-20 space-y-8">
+      {/* High-Contrast Header + Share Code + Emergency Button */}
+      <section className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 border-b-2 border-slate-900 dark:border-slate-200 pb-6">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-base font-bold text-teal-800 dark:text-teal-300">
+            <span className="inline-flex items-center gap-1.5">
+              <ShieldCheck className="w-5 h-5 shrink-0" aria-hidden="true" />
+              <span>{copy.safetyTitle}</span>
+            </span>
+            <span aria-hidden="true">·</span>
             <button
-              key={opt.key}
               type="button"
-              aria-pressed={textScale === opt.key}
-              onClick={() => setTextScale(opt.key)}
-              className={`min-h-[44px] min-w-[48px] px-3 py-1.5 rounded-md border-2 font-display text-sm font-extrabold cursor-pointer transition-colors ${
-                textScale === opt.key
-                  ? "bg-slate-950 dark:bg-white text-white dark:text-slate-950 border-slate-950 dark:border-white"
-                  : "bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white border-slate-400 dark:border-slate-600"
-              }`}
+              onClick={() => setShowCodeSwitcher((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 underline underline-offset-4 cursor-pointer font-mono-data"
             >
-              {opt.label}
+              <KeyRound className="w-4 h-4" aria-hidden="true" />
+              <span>Code: {shareCode}</span>
             </button>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            aria-pressed={highContrast}
-            onClick={() => setHighContrast((v) => !v)}
-            className={`inline-flex items-center gap-2 min-h-[44px] px-3.5 py-2 rounded-md border-2 text-xs sm:text-sm font-extrabold cursor-pointer transition-colors ${
-              highContrast
-                ? "bg-yellow-300 text-black border-black"
-                : "bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white border-slate-400 dark:border-slate-600"
-            }`}
-          >
-            <Contrast className="w-4 h-4" aria-hidden="true" />
-            <span>High Contrast: {highContrast ? "ON" : "OFF"}</span>
-          </button>
-
-          <button
-            type="button"
-            aria-expanded={showCodeSwitcher}
-            onClick={() => setShowCodeSwitcher((prev) => !prev)}
-            className="inline-flex items-center gap-1.5 min-h-[44px] px-3.5 py-2 rounded-md border-2 border-slate-400 dark:border-slate-600 bg-white dark:bg-slate-950 text-slate-950 dark:text-white font-mono-data text-xs sm:text-sm font-bold cursor-pointer"
-          >
-            <KeyRound className="w-4 h-4" aria-hidden="true" />
-            <span>{shareCode}</span>
-          </button>
-        </div>
-      </section>
-
-      {/* Optional Share Code Switcher */}
-      {showCodeSwitcher && (
-        <form
-          onSubmit={handleApplyShareCode}
-          className="flex flex-wrap items-center gap-3 rounded-lg border-2 border-slate-900 dark:border-slate-300 bg-white dark:bg-slate-900 p-4"
-        >
-          <label
-            htmlFor="nani-share-code"
-            className="text-sm sm:text-base font-bold text-slate-950 dark:text-white"
-          >
-            Family Share Code:
-          </label>
-          <input
-            id="nani-share-code"
-            type="text"
-            value={codeDraft}
-            onChange={(e) => setCodeDraft(e.target.value.toUpperCase())}
-            placeholder="DEMO01"
-            className="min-h-[48px] w-36 px-3.5 py-2 rounded-md border-2 border-slate-900 dark:border-slate-300 bg-white dark:bg-slate-950 text-slate-950 dark:text-white font-mono-data text-base font-bold uppercase"
-          />
-          <button
-            type="submit"
-            className="min-h-[48px] px-5 py-2 rounded-md bg-teal-700 dark:bg-teal-400 text-white dark:text-slate-950 font-bold text-sm sm:text-base cursor-pointer"
-          >
-            Load Schedule
-          </button>
-        </form>
-      )}
-
-      {/* High-Contrast Header + Emergency Call Button */}
-      <section className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b-2 border-slate-900 dark:border-slate-300 pb-5">
-        <div className="space-y-1.5">
-          <p className="inline-flex items-center gap-1.5 text-sm sm:text-base font-bold text-teal-800 dark:text-teal-300">
-            <ShieldCheck className="w-5 h-5 shrink-0" aria-hidden="true" />
-            <span>{copy.safetyTitle}</span>
-          </p>
-          <h1 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-950 dark:text-white">
+          </div>
+          <h1 className="font-display text-3xl sm:text-5xl font-extrabold tracking-tight text-slate-950 dark:text-white">
             {copy.heading}
           </h1>
         </div>
@@ -669,7 +463,7 @@ export function NaniPage({
         <button
           type="button"
           onClick={() => setShowEmergencyModal(true)}
-          className="inline-flex items-center justify-center gap-2.5 min-h-[60px] px-6 py-3.5 rounded-md bg-red-700 hover:bg-red-800 text-white font-display text-lg sm:text-xl font-extrabold border-2 border-red-950 dark:border-red-300 transition-colors cursor-pointer shrink-0"
+          className="inline-flex items-center justify-center gap-3 min-h-[68px] px-7 py-4 rounded-2xl bg-red-700 hover:bg-red-800 dark:bg-red-600 dark:hover:bg-red-500 text-white font-display text-xl font-extrabold border-2 border-red-900 dark:border-red-300 transition-colors cursor-pointer shrink-0"
         >
           <PhoneCall className="w-6 h-6 shrink-0" aria-hidden="true" />
           <span>
@@ -678,8 +472,33 @@ export function NaniPage({
         </button>
       </section>
 
-      {/* Large Language Selector */}
-      <section aria-label="Choose voice language" className="grid grid-cols-3 gap-2.5 sm:gap-3">
+      {/* Optional Login-Free Share Code Switcher */}
+      {showCodeSwitcher && (
+        <form
+          onSubmit={handleApplyShareCode}
+          className="flex flex-wrap items-center gap-3 rounded-2xl border-2 border-slate-900 dark:border-slate-300 bg-white dark:bg-slate-900 p-4"
+        >
+          <label className="text-base font-bold text-slate-950 dark:text-white">
+            Family Share Code (Login-Free):
+          </label>
+          <input
+            type="text"
+            value={codeDraft}
+            onChange={(e) => setCodeDraft(e.target.value.toUpperCase())}
+            placeholder="DEMO01"
+            className="min-h-[48px] w-40 px-4 py-2 rounded-xl border-2 border-slate-900 dark:border-slate-300 bg-white dark:bg-slate-950 text-slate-950 dark:text-white font-mono-data text-lg font-bold uppercase"
+          />
+          <button
+            type="submit"
+            className="min-h-[48px] px-5 py-2 rounded-xl bg-teal-700 dark:bg-teal-400 text-white dark:text-slate-950 font-bold text-base cursor-pointer"
+          >
+            Load Schedule
+          </button>
+        </form>
+      )}
+
+      {/* Huge Language Selector */}
+      <section aria-label="Choose voice language" className="grid grid-cols-3 gap-3 sm:gap-4">
         {(Object.keys(LANGUAGES) as LanguageCode[]).map((langCode) => {
           const item = LANGUAGES[langCode];
           const active = language === langCode;
@@ -687,13 +506,12 @@ export function NaniPage({
             <button
               key={langCode}
               type="button"
-              aria-pressed={active}
               onClick={() => {
                 stopSpeaking();
                 setIsSpeaking(false);
                 onChangeLanguage(langCode);
               }}
-              className={`min-h-[56px] px-3 py-3 rounded-md border-2 font-display text-base sm:text-xl font-extrabold transition-colors cursor-pointer ${
+              className={`min-h-[60px] px-4 py-3 rounded-2xl border-2 font-display text-lg sm:text-xl font-extrabold transition-colors cursor-pointer ${
                 active
                   ? "bg-slate-950 dark:bg-white text-white dark:text-slate-950 border-slate-950 dark:border-white"
                   : "bg-white dark:bg-slate-900 text-slate-950 dark:text-white border-slate-400 dark:border-slate-600 hover:border-slate-950 dark:hover:border-white"
@@ -705,43 +523,29 @@ export function NaniPage({
         })}
       </section>
 
-      {/* Voice Deck + Camera Pill-Strip Verifier */}
+      {/* Voice Assistant + Voice Recognition Command Deck */}
       <section
-        aria-label="Voice assistant and strip verification"
-        className={`rounded-lg border-2 p-4 sm:p-6 space-y-4 ${
-          highContrast
-            ? "border-black dark:border-yellow-300 bg-white dark:bg-black"
-            : "border-slate-900 dark:border-slate-300 bg-white dark:bg-slate-900"
-        }`}
+        aria-label="Voice assistant and voice commands"
+        className="rounded-3xl border-2 border-slate-900 dark:border-slate-200 bg-white dark:bg-slate-900 p-5 sm:p-7 space-y-5"
       >
-        <input
-          ref={stripInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          onChange={(e) => void handleStripVerifyFile(e)}
-          className="hidden"
-        />
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <button
             type="button"
-            aria-pressed={isSpeaking && !speakingMedId}
             onClick={() => handleSpeakSlot(selectedSlot)}
-            className={`min-h-[72px] px-5 py-4 rounded-md border-2 font-display text-lg sm:text-xl font-extrabold flex items-center justify-center gap-3 transition-colors cursor-pointer ${
+            className={`min-h-[80px] px-6 py-5 rounded-2xl border-2 font-display text-xl sm:text-2xl font-extrabold flex items-center justify-center gap-3.5 transition-colors cursor-pointer ${
               isSpeaking && !speakingMedId
-                ? "bg-amber-400 hover:bg-amber-500 text-slate-950 border-slate-950"
-                : "bg-teal-700 hover:bg-teal-800 dark:bg-teal-400 dark:hover:bg-teal-300 text-white dark:text-slate-950 border-teal-950 dark:border-teal-200"
+                ? "bg-amber-500 hover:bg-amber-600 text-slate-950 border-slate-950"
+                : "bg-teal-700 hover:bg-teal-800 dark:bg-teal-400 dark:hover:bg-teal-300 text-white dark:text-slate-950 border-teal-900 dark:border-teal-200"
             }`}
           >
             {isSpeaking && !speakingMedId ? (
               <>
-                <VolumeX className="w-6 h-6 shrink-0" aria-hidden="true" />
+                <VolumeX className="w-7 h-7 shrink-0" aria-hidden="true" />
                 <span>{copy.stopVoice}</span>
               </>
             ) : (
               <>
-                <Volume2 className="w-6 h-6 shrink-0" aria-hidden="true" />
+                <Volume2 className="w-7 h-7 shrink-0" aria-hidden="true" />
                 <span>{copy.readAll}</span>
               </>
             )}
@@ -749,9 +553,8 @@ export function NaniPage({
 
           <button
             type="button"
-            aria-pressed={isListening}
             onClick={handleToggleVoiceRecognition}
-            className={`min-h-[72px] px-5 py-4 rounded-md border-2 font-display text-lg sm:text-xl font-extrabold flex items-center justify-center gap-3 transition-colors cursor-pointer ${
+            className={`min-h-[80px] px-6 py-5 rounded-2xl border-2 font-display text-xl sm:text-2xl font-extrabold flex items-center justify-center gap-3.5 transition-colors cursor-pointer ${
               isListening
                 ? "bg-red-700 text-white border-red-950 dark:border-red-300"
                 : "bg-slate-950 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-950 border-slate-950 dark:border-white"
@@ -759,108 +562,84 @@ export function NaniPage({
           >
             {isListening ? (
               <>
-                <MicOff className="w-6 h-6 shrink-0" aria-hidden="true" />
+                <MicOff className="w-7 h-7 shrink-0" aria-hidden="true" />
                 <span>Stop Listening</span>
               </>
             ) : (
               <>
-                <Mic className="w-6 h-6 shrink-0" aria-hidden="true" />
+                <Mic className="w-7 h-7 shrink-0" aria-hidden="true" />
                 <span>{copy.tapSpeak}</span>
               </>
             )}
           </button>
-
-          <button
-            type="button"
-            disabled={isVerifyingStrip}
-            onClick={() => stripInputRef.current?.click()}
-            className="min-h-[72px] px-5 py-4 rounded-md border-2 border-slate-900 dark:border-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-950 dark:text-white font-display text-lg sm:text-xl font-extrabold flex items-center justify-center gap-3 transition-colors cursor-pointer disabled:opacity-60"
-          >
-            {isVerifyingStrip ? (
-              <Loader2 className="w-6 h-6 animate-spin shrink-0" aria-hidden="true" />
-            ) : (
-              <Camera className="w-6 h-6 shrink-0" aria-hidden="true" />
-            )}
-            <span>{isVerifyingStrip ? "Checking Strip..." : copy.checkStrip}</span>
-          </button>
         </div>
 
-        {/* Camera Pill-Strip Verification Result Banner */}
-        {stripResult && (
-          <div
-            role="status"
-            aria-live="polite"
-            className={`rounded-md border-2 p-4 flex items-start justify-between gap-3 ${
-              stripResult.matched
-                ? "border-green-800 bg-green-50 dark:bg-green-950/50 text-green-950 dark:text-green-100"
-                : "border-red-800 bg-red-50 dark:bg-red-950/50 text-red-950 dark:text-red-100"
-            }`}
-          >
-            <div className="flex items-start gap-3">
-              {stripResult.matched ? (
-                <CheckCircle2 className="w-7 h-7 text-green-700 dark:text-green-400 shrink-0 mt-0.5" aria-hidden="true" />
-              ) : (
-                <AlertOctagon className="w-7 h-7 text-red-700 dark:text-red-400 shrink-0 mt-0.5" aria-hidden="true" />
-              )}
-              <div className="space-y-1">
-                <p className="font-display text-lg font-extrabold">
-                  {stripResult.matched
-                    ? `YES — Verified Medicine (${stripResult.detected_brand || ""})`
-                    : `STOP — Not In Your Verified Schedule (${stripResult.detected_brand || "Unknown"})`}
-                </p>
-                <p className="text-base font-semibold">
-                  {language === "hi"
-                    ? stripResult.spoken_hi
-                    : language === "mr"
-                    ? stripResult.spoken_mr
-                    : stripResult.spoken_en}
-                </p>
-              </div>
-            </div>
+        <div className="space-y-3 pt-1">
+          {ttsError && (
+            <p
+              role="alert"
+              className="rounded-xl border-2 border-red-600 bg-red-50 dark:bg-red-950/50 px-4 py-3 text-sm sm:text-base font-bold text-red-800 dark:text-red-200"
+            >
+              {ttsError}
+            </p>
+          )}
+          {voiceFeedback && (
+            <p
+              role="status"
+              className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100"
+            >
+              {voiceFeedback}
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
+              Quick Voice Prompts:
+            </span>
             <button
               type="button"
-              onClick={() => setStripResult(null)}
-              aria-label="Dismiss strip check result"
-              className="min-h-[40px] min-w-[40px] rounded-md border border-current flex items-center justify-center shrink-0 cursor-pointer"
+              onClick={() => processVoiceCommand("what medicine now")}
+              className="min-h-[44px] px-4 py-2 rounded-xl border-2 border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-950 dark:text-white text-sm font-bold hover:border-teal-700 dark:hover:border-teal-400 cursor-pointer"
             >
-              <X className="w-4 h-4" aria-hidden="true" />
+              &ldquo;What medicine now?&rdquo;
+            </button>
+            <button
+              type="button"
+              onClick={() => processVoiceCommand("morning")}
+              className="min-h-[44px] px-4 py-2 rounded-xl border-2 border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-950 dark:text-white text-sm font-bold hover:border-teal-700 dark:hover:border-teal-400 cursor-pointer"
+            >
+              &ldquo;Morning medicines&rdquo;
+            </button>
+            <button
+              type="button"
+              onClick={() => processVoiceCommand("night")}
+              className="min-h-[44px] px-4 py-2 rounded-xl border-2 border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-950 dark:text-white text-sm font-bold hover:border-teal-700 dark:hover:border-teal-400 cursor-pointer"
+            >
+              &ldquo;Night medicines&rdquo;
+            </button>
+            <button
+              type="button"
+              onClick={() => processVoiceCommand("taken")}
+              className="min-h-[44px] px-4 py-2 rounded-xl border-2 border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-950 dark:text-white text-sm font-bold hover:border-teal-700 dark:hover:border-teal-400 cursor-pointer"
+            >
+              &ldquo;Mark next taken&rdquo;
             </button>
           </div>
-        )}
-
-        {ttsError && (
-          <p
-            role="alert"
-            className="rounded-md border-2 border-red-700 bg-red-50 dark:bg-red-950/50 px-4 py-3 text-sm sm:text-base font-bold text-red-900 dark:text-red-200"
-          >
-            {ttsError}
-          </p>
-        )}
-
-        {voiceFeedback && (
-          <p
-            role="status"
-            aria-live="polite"
-            className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-4 py-2.5 text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100"
-          >
-            {voiceFeedback}
-          </p>
-        )}
+        </div>
       </section>
 
       {/* Time-of-Day Filter Buttons */}
-      <section aria-label="Time of day filter" className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+      <section aria-label="Time of day schedule" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {slotButtons.map((btn) => {
           const active = selectedSlot === btn.key;
           return (
             <button
               key={btn.key}
               type="button"
-              aria-pressed={active}
               onClick={() => setSelectedSlot(btn.key)}
-              className={`min-h-[56px] px-4 py-3 rounded-md border-2 text-base sm:text-lg font-extrabold transition-colors cursor-pointer ${
+              className={`min-h-[60px] px-4 py-3 rounded-2xl border-2 text-base sm:text-lg font-extrabold transition-colors cursor-pointer ${
                 active
-                  ? "bg-teal-700 dark:bg-teal-400 text-white dark:text-slate-950 border-teal-950 dark:border-teal-200"
+                  ? "bg-teal-700 dark:bg-teal-400 text-white dark:text-slate-950 border-teal-900 dark:border-teal-200"
                   : "bg-white dark:bg-slate-900 text-slate-950 dark:text-white border-slate-400 dark:border-slate-600 hover:border-slate-950 dark:hover:border-white"
               }`}
             >
@@ -870,147 +649,35 @@ export function NaniPage({
         })}
       </section>
 
-      {/* LIVE Interactive Today's Dose Table with Big GREEN Taken Buttons */}
-      {strictlyVerified.length > 0 && (
-        <section
-          aria-labelledby="dose-table-heading"
-          className={`rounded-lg border-2 overflow-hidden ${
-            highContrast
-              ? "border-black dark:border-yellow-300 bg-white dark:bg-black"
-              : "border-slate-900 dark:border-slate-300 bg-white dark:bg-slate-900"
-          }`}
-        >
-          <div className="p-4 sm:p-5 border-b-2 border-slate-200 dark:border-slate-800 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2
-                id="dose-table-heading"
-                className="font-display text-xl sm:text-2xl font-extrabold text-slate-950 dark:text-white"
-              >
-                {copy.tableHeading}
-              </h2>
-              <p className="font-display text-base sm:text-lg font-extrabold text-green-800 dark:text-green-300 tabular-nums">
-                {takenDosesToday} / {totalDosesToday} ({progressPercent}%)
-              </p>
-            </div>
-            <div
-              role="progressbar"
-              aria-valuenow={progressPercent}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label="Daily doses completed"
-              className="w-full h-3.5 rounded-sm bg-slate-200 dark:bg-slate-800 overflow-hidden border border-slate-400 dark:border-slate-600"
-            >
-              <div
-                className="h-full bg-green-700 dark:bg-green-500 transition-all duration-300"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b-2 border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-950 text-xs sm:text-sm font-extrabold uppercase tracking-wide text-slate-800 dark:text-slate-200">
-                  <th className="py-3 px-4">Medicine</th>
-                  <th className="py-3 px-4">Time</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4 text-right">Confirm Pill Taken</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {visibleTableRows.map((row) => (
-                  <tr
-                    key={row.key}
-                    className={
-                      row.taken
-                        ? "bg-green-50 dark:bg-green-950/30"
-                        : "bg-white dark:bg-slate-900"
-                    }
-                  >
-                    <td className="py-3.5 px-4">
-                      <p className="font-display text-base sm:text-lg font-extrabold text-slate-950 dark:text-white">
-                        {row.medicine.medicine_name}
-                      </p>
-                      <p className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300">
-                        {row.medicine.dosage} · {row.medicine.meal_relation}
-                      </p>
-                    </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap font-mono-data text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                      {SLOT_LOCALIZED_LABELS[language][row.slot]} ({row.timeLabel})
-                    </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      {row.taken ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm bg-green-700 text-white text-xs sm:text-sm font-extrabold">
-                          <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
-                          <span>{copy.takenDone}</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-sm bg-amber-100 dark:bg-amber-950 border border-amber-500 text-amber-950 dark:text-amber-200 text-xs sm:text-sm font-extrabold">
-                          {copy.pendingLabel}
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                      <button
-                        type="button"
-                        aria-pressed={row.taken}
-                        onClick={() => void handleToggleTakenWithVoice(row.medicine, row.slot)}
-                        className={`inline-flex items-center justify-center gap-2 min-h-[52px] px-4 sm:px-5 py-2.5 rounded-md border-2 font-display text-sm sm:text-base font-extrabold transition-colors cursor-pointer ${
-                          row.taken
-                            ? "bg-white dark:bg-slate-950 text-green-900 dark:text-green-300 border-green-700 dark:border-green-400 hover:bg-green-50"
-                            : "bg-green-700 hover:bg-green-800 text-white border-green-950 dark:border-green-300"
-                        }`}
-                      >
-                        {row.taken ? (
-                          <>
-                            <CheckCircle2 className="w-5 h-5 shrink-0" aria-hidden="true" />
-                            <span>{copy.takenDone}</span>
-                          </>
-                        ) : (
-                          <>
-                            <Check className="w-5 h-5 shrink-0 stroke-[3]" aria-hidden="true" />
-                            <span>{copy.takeAction}</span>
-                          </>
-                        )}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
-      {/* Detailed Visual Medicine Cards */}
+      {/* Verified Pill-Strip Cards */}
       {strictlyVerified.length === 0 ? (
-        <section className="rounded-lg border-2 border-slate-900 dark:border-slate-300 bg-white dark:bg-slate-900 p-8 text-center space-y-5">
-          <p className="font-display text-xl sm:text-2xl font-extrabold text-slate-950 dark:text-white">
+        <section className="rounded-3xl border-2 border-slate-900 dark:border-slate-200 bg-white dark:bg-slate-900 p-8 sm:p-10 text-center space-y-5">
+          <p className="font-display text-2xl font-extrabold text-slate-950 dark:text-white">
             {copy.noVerified}
           </p>
           <button
             type="button"
             onClick={onSwitchToCaregiver}
-            className="min-h-[56px] px-6 py-3.5 rounded-md bg-slate-950 dark:bg-white text-white dark:text-slate-950 font-display text-lg font-extrabold cursor-pointer"
+            className="min-h-[60px] px-7 py-4 rounded-2xl bg-slate-950 dark:bg-white text-white dark:text-slate-950 font-display text-lg font-extrabold cursor-pointer"
           >
             Go to Caregiver Mode
           </button>
         </section>
       ) : visibleMedicines.length === 0 ? (
-        <section className="rounded-lg border-2 border-slate-900 dark:border-slate-300 bg-white dark:bg-slate-900 p-8 text-center space-y-4">
-          <p className="font-display text-xl sm:text-2xl font-extrabold text-slate-950 dark:text-white">
+        <section className="rounded-3xl border-2 border-slate-900 dark:border-slate-200 bg-white dark:bg-slate-900 p-8 text-center space-y-4">
+          <p className="font-display text-2xl font-extrabold text-slate-950 dark:text-white">
             No medicines scheduled for {selectedSlot}
           </p>
           <button
             type="button"
             onClick={() => setSelectedSlot("All")}
-            className="min-h-[52px] px-6 py-3 rounded-md bg-teal-700 dark:bg-teal-400 text-white dark:text-slate-950 font-display text-base sm:text-lg font-extrabold cursor-pointer"
+            className="min-h-[56px] px-6 py-3 rounded-2xl bg-teal-700 dark:bg-teal-400 text-white dark:text-slate-950 font-display text-lg font-extrabold cursor-pointer"
           >
             Show All Today&apos;s Verified Medicines
           </button>
         </section>
       ) : (
-        <section aria-label="Detailed medicine cards" className="space-y-5">
+        <section aria-label="Verified medicines list" className="space-y-6">
           {visibleMedicines.map((med) => {
             const activeSlotForCard: TimeSlotKey =
               selectedSlot !== "All"
@@ -1025,7 +692,6 @@ export function NaniPage({
                 medicine={med}
                 activeSlot={activeSlotForCard}
                 language={language}
-                highContrast={highContrast}
                 isSpeakingThis={isSpeaking && speakingMedId === med.id}
                 labels={{
                   listenOne: copy.listenOne,
@@ -1047,21 +713,21 @@ export function NaniPage({
           role="dialog"
           aria-modal="true"
           aria-labelledby="emergency-dialog-title"
-          className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
         >
-          <div className="w-full max-w-lg rounded-lg border-4 border-red-700 dark:border-red-400 bg-white dark:bg-slate-950 p-6 space-y-5">
+          <div className="w-full max-w-lg rounded-3xl border-4 border-red-700 dark:border-red-400 bg-white dark:bg-slate-950 p-6 sm:p-8 space-y-6">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1">
-                <p className="text-sm font-extrabold uppercase tracking-wide text-red-700 dark:text-red-400">
+                <p className="text-base font-extrabold text-red-700 dark:text-red-400">
                   Emergency Contact
                 </p>
                 <h2
                   id="emergency-dialog-title"
-                  className="font-display text-2xl sm:text-3xl font-extrabold text-slate-950 dark:text-white"
+                  className="font-display text-3xl font-extrabold text-slate-950 dark:text-white"
                 >
                   {emergencyContact.name}
                 </h2>
-                <p className="text-base sm:text-lg font-bold text-slate-700 dark:text-slate-300">
+                <p className="text-lg font-bold text-slate-700 dark:text-slate-300">
                   {emergencyContact.relation} · {emergencyContact.phone}
                 </p>
               </div>
@@ -1069,18 +735,18 @@ export function NaniPage({
                 type="button"
                 onClick={() => setShowEmergencyModal(false)}
                 aria-label="Close emergency dialog"
-                className="min-h-[48px] min-w-[48px] rounded-md border-2 border-slate-900 dark:border-slate-300 flex items-center justify-center text-slate-950 dark:text-white cursor-pointer"
+                className="min-h-[48px] min-w-[48px] rounded-xl border-2 border-slate-900 dark:border-slate-300 flex items-center justify-center text-slate-950 dark:text-white cursor-pointer"
               >
                 <X className="w-6 h-6" aria-hidden="true" />
               </button>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-4">
               <a
                 href={cleanTelHref}
-                className="w-full min-h-[68px] px-5 py-4 rounded-md bg-red-700 hover:bg-red-800 text-white font-display text-xl sm:text-2xl font-extrabold flex items-center justify-center gap-3 transition-colors"
+                className="w-full min-h-[72px] px-6 py-4 rounded-2xl bg-red-700 hover:bg-red-800 text-white font-display text-2xl font-extrabold flex items-center justify-center gap-3 transition-colors"
               >
-                <PhoneCall className="w-6 h-6 shrink-0" aria-hidden="true" />
+                <PhoneCall className="w-7 h-7 shrink-0" aria-hidden="true" />
                 <span>Call Now · {emergencyContact.phone}</span>
               </a>
 
@@ -1088,7 +754,7 @@ export function NaniPage({
                 href={emergencyWhatsAppHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-full min-h-[64px] px-5 py-4 rounded-md bg-green-700 hover:bg-green-800 text-white font-display text-lg sm:text-xl font-extrabold flex items-center justify-center gap-3 transition-colors"
+                className="w-full min-h-[68px] px-6 py-4 rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white font-display text-xl font-extrabold flex items-center justify-center gap-3 transition-colors"
               >
                 <MessageCircle className="w-6 h-6 shrink-0" aria-hidden="true" />
                 <span>Send Urgent WhatsApp SOS</span>
@@ -1097,7 +763,7 @@ export function NaniPage({
               <button
                 type="button"
                 onClick={() => setShowEmergencyModal(false)}
-                className="w-full min-h-[52px] px-5 py-3 rounded-md border-2 border-slate-900 dark:border-slate-300 text-slate-950 dark:text-white font-display text-lg font-bold cursor-pointer"
+                className="w-full min-h-[56px] px-6 py-3 rounded-2xl border-2 border-slate-900 dark:border-slate-300 text-slate-950 dark:text-white font-display text-lg font-bold cursor-pointer"
               >
                 Cancel
               </button>
