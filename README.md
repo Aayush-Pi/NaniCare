@@ -1,10 +1,3 @@
-## Team
-
-**Lawyer Said, Commit!** — Hackathon Team
-
-- Arnav Verma
-- Karthik Maurya
-- Aayush Jha
 # NaniCare
 
 NaniCare is a voice-first medication and wellness companion for Indian families. Caregivers can scan and review prescriptions, while older adults can use a simple shared code to view verified medicine schedules, hear instructions, and record doses. Families can also log health readings and share a daily summary.
@@ -38,6 +31,26 @@ The backend is a FastAPI service backed by PostgreSQL (Neon) or local SQLite. It
 - PostgreSQL/Neon is optional for local development; SQLite is used when no database URL is configured
 
 ## Run locally
+
+### Quick start (recommended)
+
+From the repository root, run the single launcher script:
+
+```bash
+./start.sh
+```
+
+This automatically creates missing `.env` files, sets up `backend/.venv`, installs backend and frontend dependencies if needed, and starts both the FastAPI backend (`http://localhost:8000`) and the frontend (`http://localhost:3000`). Press `Ctrl+C` to stop both servers.
+
+Useful flags:
+
+```bash
+./start.sh --open       # Start both servers and open http://localhost:3000
+./start.sh --setup      # Install dependencies and verify .env files without starting
+./start.sh --no-reload  # Run uvicorn without auto-reload
+```
+
+### Manual setup (two terminals)
 
 Open two terminals from the repository root.
 
