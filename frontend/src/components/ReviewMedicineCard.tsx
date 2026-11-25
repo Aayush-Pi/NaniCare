@@ -55,15 +55,19 @@ export function ReviewMedicineCard({
   onRemove,
 }: ReviewMedicineCardProps) {
   const computedSlots = parseFrequencyToSlots(draft.frequency_code);
+  const highlightRed = !draft.manually_verified && draft.highlight_color === "red";
   const highlightYellow =
     !draft.manually_verified &&
+    !highlightRed &&
     (draft.needs_review ||
       draft.ai_accuracy === "Low" ||
       draft.ai_accuracy === "Medium");
 
-  const inputBaseClass = highlightYellow
-    ? "w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-amber-400 dark:border-amber-500/80 bg-amber-50/70 dark:bg-amber-950/30 text-slate-900 dark:text-white text-sm font-medium"
-    : "w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm font-medium";
+  const inputBaseClass = highlightRed
+    ? "w-full min-h-[44px] px-3 py-2 rounded-md border border-red-400 dark:border-red-500 bg-red-50/70 dark:bg-red-950/30 text-slate-900 dark:text-white text-sm font-medium"
+    : highlightYellow
+    ? "w-full min-h-[44px] px-3 py-2 rounded-md border border-amber-400 dark:border-amber-500/80 bg-amber-50/70 dark:bg-amber-950/30 text-slate-900 dark:text-white text-sm font-medium"
+    : "w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm font-medium";
 
   function handleStripPhotoUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -80,9 +84,11 @@ export function ReviewMedicineCard({
 
   return (
     <article
-      className={`rounded-2xl border p-6 space-y-5 transition-colors ${
+      className={`rounded-lg border p-5 sm:p-6 space-y-5 transition-colors ${
         draft.manually_verified
-          ? "border-emerald-500 dark:border-emerald-500/70 bg-emerald-50/40 dark:bg-emerald-950/20"
+          ? "border-green-600 dark:border-green-500/80 bg-green-50/40 dark:bg-green-950/20"
+          : highlightRed
+          ? "border-red-500 dark:border-red-500 bg-red-50/50 dark:bg-red-950/25"
           : highlightYellow
           ? "border-amber-400 dark:border-amber-500/80 bg-amber-50/60 dark:bg-amber-950/25"
           : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
@@ -91,8 +97,8 @@ export function ReviewMedicineCard({
       {/* Header Row: Layer 1 AI Accuracy + Layer 2 Manual Verification Button */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
         <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 tabular-nums">
               Medicine 0{index + 1}
             </span>
             <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">
@@ -105,17 +111,18 @@ export function ReviewMedicineCard({
           </p>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2.5 shrink-0">
           <button
             type="button"
+            aria-pressed={draft.manually_verified}
             onClick={() =>
               onChange(draft.id, {
                 manually_verified: !draft.manually_verified,
               })
             }
-            className={`inline-flex items-center gap-2 min-h-[44px] px-4 py-2 rounded-xl text-sm font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            className={`flex-1 sm:flex-none inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2 rounded-md text-sm font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
               draft.manually_verified
-                ? "bg-emerald-700 hover:bg-emerald-800 text-white"
+                ? "bg-green-700 hover:bg-green-800 text-white"
                 : "bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-200 text-white dark:text-slate-950"
             }`}
           >
@@ -131,7 +138,7 @@ export function ReviewMedicineCard({
             type="button"
             onClick={() => onRemove(draft.id)}
             aria-label={`Remove ${draft.medicine_name || "medicine"}`}
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-red-700 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-800 transition-colors cursor-pointer"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:text-red-700 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-800 transition-colors cursor-pointer"
           >
             <Trash2 className="w-4 h-4" aria-hidden="true" />
           </button>
@@ -257,7 +264,7 @@ export function ReviewMedicineCard({
                     simple_explanation_en: e.target.value,
                   })
                 }
-                className="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm"
+                className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm"
               />
             </label>
 
@@ -274,7 +281,7 @@ export function ReviewMedicineCard({
                       simple_explanation_hi: e.target.value,
                     })
                   }
-                  className="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm"
                 />
               </label>
 
@@ -290,7 +297,7 @@ export function ReviewMedicineCard({
                       simple_explanation_mr: e.target.value,
                     })
                   }
-                  className="w-full min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-sm"
                 />
               </label>
             </div>
@@ -303,7 +310,7 @@ export function ReviewMedicineCard({
             Visual Pill-Strip Photo (for Grandparents Mode)
           </p>
 
-          <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 aspect-[4/3]">
+          <div className="rounded-md overflow-hidden border border-slate-200 dark:border-slate-700 aspect-[4/3]">
             <StripImage
               src={draft.strip_image_url}
               alt={`${draft.medicine_name} strip`}
@@ -313,7 +320,7 @@ export function ReviewMedicineCard({
           </div>
 
           <div className="flex flex-col gap-2">
-            <label className="inline-flex items-center justify-center gap-2 min-h-[40px] px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:border-teal-600 dark:hover:border-teal-400 transition-colors cursor-pointer">
+            <label className="inline-flex items-center justify-center gap-2 min-h-[44px] px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:border-teal-600 dark:hover:border-teal-400 transition-colors cursor-pointer">
               <ImagePlus
                 className="w-4 h-4 text-teal-700 dark:text-teal-400"
                 aria-hidden="true"
@@ -345,7 +352,7 @@ export function ReviewMedicineCard({
                   });
                 }
               }}
-              className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs text-slate-700 dark:text-slate-300"
+              className="w-full min-h-[44px] px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs text-slate-800 dark:text-slate-200"
             >
               <option value="">Custom uploaded strip photo</option>
               {STRIP_PRESET_LIBRARY.map((preset) => (

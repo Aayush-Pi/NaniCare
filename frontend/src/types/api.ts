@@ -174,4 +174,31 @@ export interface ProfileSummaryResponse {
   emergency_contact: EmergencyContact;
   summary_text: string;
   whatsapp_url: string;
+  refill_alerts?: string[];
+}
+
+export interface StripVerifyResult {
+  share_code: string;
+  matched: boolean;
+  confidence: number;
+  detected_brand?: string | null;
+  detected_strength?: string | null;
+  next_slot_label?: string | null;
+  spoken_en: string;
+  spoken_hi: string;
+  spoken_mr: string;
+  warning?: string | null;
+}
+
+export interface RefillStatusItem {
+  medicine_id: number;
+  brand_name: string;
+  strength?: string | null;
+  duration_days?: number | null;
+  days_elapsed: number;
+  days_remaining?: number | null;
+  status: "ok" | "refill_soon" | "completed" | "ongoing";
+  message_en: string;
+  message_hi: string;
+  message_mr: string;
 }
