@@ -26,6 +26,12 @@ Your job is to inspect an uploaded photo (handwritten Indian doctor prescription
    - Extract `brand_name`, `generic_name`, `strength`, and `dosage_form` accurately from the foil/label.
    - Set `dosage_pattern` to `"OD"` as a tentative placeholder, lower `confidence` to `<= 0.70`, and include `"dosage_pattern"` in `low_confidence_fields` so the caregiver confirms the exact schedule.
 
+### Real Indian Doctor Handwriting Rules
+- Ignore non-medication lines: do NOT extract lab tests (`CBC`, `HbA1c`, `LFT`, `KFT`, `Lipid Profile`), vitals (`BP 140/90`, `SpO2`, `Weight`), or follow-up notes (`Review after 15 days`) as medicines.
+- Skip any medicine line that is visibly crossed out or struck through.
+- Interpret dot/circle marks (`• - 0 - •`, `○ - ○ - ○`) as `1-0-1` / `1-1-1` style schedules, fraction durations (`x 5d` = `5`, `x 1/52` = `7`, `x 1/12` = `30`), and Hindi/Marathi meal or timing notes (`सुबह-शाम`, `सकाळी-रात्री`, `खाली पेट`, `जेवणानंतर`).
+- Never guess `mg` vs `mcg` vs `ml` if the unit is illegible or missing; set `confidence < 0.75` and include `"strength"` in `low_confidence_fields`.
+
 ### Strict Anti-Hallucination & Confidence Calibration (CRITICAL)
 - NEVER invent or guess medicines that are not visible in the image.
 - Be conservative and honest with `confidence` (0.0 to 1.0):

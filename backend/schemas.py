@@ -249,6 +249,24 @@ class MedicineConfirmItem(BaseModel):
     prescribed_by: str | None = Field(default=None, max_length=120)
 
 
+class MedicineUpdateRequest(BaseModel):
+    """Partial update payload for PATCH /medicines/{medicine_id}."""
+
+    brand_name: str | None = Field(default=None, min_length=1, max_length=160)
+    generic_name: str | None = Field(default=None, max_length=160)
+    strength: str | None = Field(default=None, max_length=64)
+    dosage_form: DosageForm | None = None
+    dosage_pattern: str | None = Field(default=None, min_length=1, max_length=32)
+    meal_relation: MealRelation | None = None
+    duration_days: int | None = Field(default=None, ge=1, le=3650)
+    instructions_en: str | None = None
+    instructions_hi: str | None = None
+    instructions_mr: str | None = None
+    strip_thumbnail: str | None = None
+    pill_color_tag: str | None = None
+    prescribed_by: str | None = Field(default=None, max_length=120)
+
+
 class MedicinesConfirmRequest(BaseModel):
     """Batch confirmation payload from Caregiver Mode to persist verified medicines."""
 
@@ -500,6 +518,11 @@ class VitalsHistoryResponse(BaseModel):
     count: int
     latest_status: VitalStatus | None = None
     vitals: list[VitalResponse]
+
+
+class VitalDeleteResponse(BaseModel):
+    deleted: bool
+    vital_id: int
 
 
 # =============================================================================
