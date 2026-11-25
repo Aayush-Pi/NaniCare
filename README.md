@@ -306,3 +306,9 @@ npm run preview          # Preview production build
 - **Frontend (Vercel / Render):** Set root directory to `frontend/`, build command `npm run build`, output directory `dist/`, and set `VITE_API_URL` to your deployed FastAPI URL (or run `NODE_ENV=production npm start` with [frontend/server.ts](frontend/server.ts)).
 
 See [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for a step-by-step live demo walkthrough.
+
+---
+
+## License
+
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** — see [LICENSE](LICENSE) for details.
