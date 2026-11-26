@@ -285,6 +285,25 @@ function mapRawScannedMedicine(
  * Targets FastAPI `${VITE_API_URL}/scan` when configured, or falls back to
  * the built-in `/api/scan` Gemini Vision endpoint.
  */
+async function fetchScan(formData: FormData): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90_000);
+  try {
+    return await fetch(`${FASTAPI_BASE_URL}/scan`, {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("The scan is taking too long. Please check your connection and try again.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function scanPrescription(params: {
   file?: File;
   imageBase64: string;
@@ -297,19 +316,13 @@ export async function scanPrescription(params: {
     if (params.file) {
       const formData = new FormData();
       formData.append("file", params.file);
-      response = await fetch(`${FASTAPI_BASE_URL}/scan`, {
-        method: "POST",
-        body: formData,
-      });
+      response = await fetchScan(formData);
     } else {
       const blobRes = await fetch(params.imageBase64);
       const blob = await blobRes.blob();
       const formData = new FormData();
       formData.append("file", blob, "prescription.jpg");
-      response = await fetch(`${FASTAPI_BASE_URL}/scan`, {
-        method: "POST",
-        body: formData,
-      });
+      response = await fetchScan(formData);
     }
 
     const payload = (await response.json()) as Record<string, unknown>;

@@ -1,5 +1,5 @@
 import { prepareImageFile } from "../utils/image";
-import { ChangeEvent, useRef } from "react";
+import { ChangeEvent, useRef, useState } from "react";
 import {
   Camera,
   FileText,
@@ -33,10 +33,13 @@ export function PrescriptionScanner({
   onAddManual,
 }: PrescriptionScannerProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const [showSourceMenu, setShowSourceMenu] = useState(false);
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const original = event.target.files?.[0];
     event.target.value = "";
+    setShowSourceMenu(false);
     if (!original) return;
 
     let file: File;
@@ -76,7 +79,16 @@ export function PrescriptionScanner({
           type="file"
           accept="image/*"
           onChange={handleFileChange}
-          aria-label="Upload or capture prescription or pill strip photo"
+          aria-label="Choose prescription or pill strip photo from files or gallery"
+          className="hidden"
+        />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleFileChange}
+          aria-label="Take a photo of the prescription or pill strip"
           className="hidden"
         />
 
@@ -84,12 +96,34 @@ export function PrescriptionScanner({
           <button
             type="button"
             disabled={isScanning}
-            onClick={() => fileInputRef.current?.click()}
+            aria-expanded={showSourceMenu}
+            onClick={() => setShowSourceMenu((v) => !v)}
             className="inline-flex items-center justify-center gap-2 min-h-[46px] px-5 py-2.5 rounded-md bg-teal-700 hover:bg-teal-800 dark:bg-teal-500 dark:hover:bg-teal-400 text-white dark:text-slate-950 text-sm font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
           >
             <Camera className="w-4 h-4" aria-hidden="true" />
             <span>Upload or Capture Photo</span>
           </button>
+
+          {showSourceMenu && (
+            <div role="group" aria-label="Choose photo source" className="flex flex-col sm:flex-row gap-2.5">
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                className="inline-flex items-center justify-center gap-2 min-h-[46px] px-4 py-2.5 rounded-md border border-teal-700 text-teal-800 dark:text-teal-300 text-sm font-bold cursor-pointer"
+              >
+                <Camera className="w-4 h-4" aria-hidden="true" />
+                <span>Take Photo</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="inline-flex items-center justify-center gap-2 min-h-[46px] px-4 py-2.5 rounded-md border border-teal-700 text-teal-800 dark:text-teal-300 text-sm font-bold cursor-pointer"
+              >
+                <FileText className="w-4 h-4" aria-hidden="true" />
+                <span>Choose from Files / Gallery</span>
+              </button>
+            </div>
+          )}
 
           <button
             type="button"

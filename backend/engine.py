@@ -116,6 +116,10 @@ def _gemini_model_candidates() -> list[str]:
         if model_name not in candidates:
             candidates.append(model_name)
     return candidates
+GEMINI_CALL_TIMEOUT_MS = 20_000  # per-model call cap so fallbacks cannot hang a scan
+GEMINI_TOTAL_BUDGET_S = 50.0  # overall scan budget before falling back to demo/error
+
+
 DEFAULT_SHARE_CODE = os.getenv("DEFAULT_SHARE_CODE", "DEMO01").strip().upper() or "DEMO01"
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024  # 12 MB max prescription image size
 
@@ -170,7 +174,10 @@ def _call_gemini_vision(
     from google.genai import types
 
     target_model = (model_name or GEMINI_MODEL).strip() or "gemini-3.5-flash"
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=GEMINI_CALL_TIMEOUT_MS),
+    )
     response = client.models.generate_content(
         model=target_model,
         contents=[
@@ -208,7 +215,10 @@ def _call_gemini_vision_with_fallback(
     last_exc: Exception | None = None
     extra_warnings: list[str] = []
     is_auto = GEMINI_MODEL.lower() == "auto"
+    started = time.monotonic()
     for idx, model_name in enumerate(candidates):
+        if last_exc is not None and time.monotonic() - started > GEMINI_TOTAL_BUDGET_S:
+            break
         try:
             extraction = _call_gemini_vision(
                 image_bytes=image_bytes,
