@@ -1,3 +1,4 @@
+import { prepareImageFile } from "../utils/image";
 import { ChangeEvent, useRef } from "react";
 import {
   Camera,
@@ -33,10 +34,17 @@ export function PrescriptionScanner({
 }: PrescriptionScannerProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const original = event.target.files?.[0];
+    event.target.value = "";
+    if (!original) return;
 
+    let file: File;
+    try {
+      file = await prepareImageFile(original);
+    } catch {
+      return;
+    }
     const reader = new FileReader();
     reader.onloadend = () => {
       if (typeof reader.result === "string") {
@@ -44,7 +52,6 @@ export function PrescriptionScanner({
       }
     };
     reader.readAsDataURL(file);
-    event.target.value = "";
   }
 
   return (
@@ -68,7 +75,6 @@ export function PrescriptionScanner({
           ref={fileInputRef}
           type="file"
           accept="image/*"
-          capture="environment"
           onChange={handleFileChange}
           aria-label="Upload or capture prescription or pill strip photo"
           className="hidden"

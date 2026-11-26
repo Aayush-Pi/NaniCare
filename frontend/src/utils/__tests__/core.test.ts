@@ -127,3 +127,13 @@ describe("Elder voiceover safety invariants", () => {
     assert.match(script, /no caregiver-verified medicines/i);
   });
 });
+
+import { isImageFile } from "../image.ts";
+
+describe("isImageFile", () => {
+  it("accepts images by MIME type or extension and rejects others", () => {
+    assert.equal(isImageFile({ type: "image/jpeg" }), true);
+    assert.equal(isImageFile({ type: "", name: "scan.HEIC" }), true);
+    assert.equal(isImageFile({ type: "application/pdf", name: "a.pdf" }), false);
+  });
+});

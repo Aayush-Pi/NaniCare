@@ -1,3 +1,4 @@
+import { prepareImageFile } from "../../utils/image";
 import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
@@ -652,7 +653,7 @@ export function NaniPage({
     setStripResult(null);
     setTtsError("");
     try {
-      const result = await verifyMedicineStrip({ shareCode, file });
+      const result = await verifyMedicineStrip({ shareCode, file: await prepareImageFile(file) });
       setStripResult(result);
       buzz(result.matched ? [80, 60, 80] : [300, 100, 300]);
       const spoken =
@@ -1212,7 +1213,6 @@ export function NaniPage({
             ref={stripInputRef}
             type="file"
             accept="image/*"
-            capture="environment"
             onChange={(e) => void handleStripVerifyFile(e)}
             className="hidden"
             aria-label={copy.takePhoto}

@@ -329,7 +329,6 @@ export function ReviewMedicineCard({
               <input
                 type="file"
                 accept="image/*"
-                capture="environment"
                 onChange={handleStripPhotoUpload}
                 className="hidden"
               />
