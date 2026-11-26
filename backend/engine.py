@@ -11,6 +11,7 @@ import base64
 import io
 import logging
 import os
+import re
 import time
 from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
@@ -24,9 +25,9 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
-from database import SessionLocal, check_db_connection, get_db, init_db
+from database import SessionLocal, check_db_connection, engine as db_engine, get_db, init_db
 from models import DoseLog, Medicine, MedicineCatalog, Profile, VitalLog
-from prompts import DEMO_PRESCRIPTION_PAYLOAD, DEMO_PROFILE_SEED, DEMO_THUMBNAILS, GEMINI_VISION_SYSTEM_PROMPT
+from prompts import DEMO_PRESCRIPTION_PAYLOAD, DEMO_PROFILE_SEED, GEMINI_VISION_SYSTEM_PROMPT
 from scheduler import (
     LOW_CONFIDENCE_THRESHOLD,
     SLOT_SORT_ORDER,
@@ -97,13 +98,11 @@ logger = logging.getLogger("nanicare.engine")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "auto").strip() or "auto"
 GEMINI_FALLBACK_MODELS: tuple[str, ...] = (
+    "gemini-2.5-flash",
     "gemini-flash-latest",
-    "gemini-3.1-flash-lite",
-    "gemini-3-flash-preview",
+    "gemini-2.5-flash-lite",
     "gemini-flash-lite-latest",
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-2.5-pro",
+    "gemini-3-flash-preview",
 )
 
 
@@ -116,8 +115,11 @@ def _gemini_model_candidates() -> list[str]:
         if model_name not in candidates:
             candidates.append(model_name)
     return candidates
-GEMINI_CALL_TIMEOUT_MS = 20_000  # per-model call cap so fallbacks cannot hang a scan
-GEMINI_TOTAL_BUDGET_S = 50.0  # overall scan budget before falling back to demo/error
+
+
+GEMINI_CALL_TIMEOUT_MS = 18_000  # per-model call cap (with attempts=1) so busy models fail over fast
+GEMINI_CATALOG_TIMEOUT_MS = 10_000  # fast text-only lookup timeout
+GEMINI_TOTAL_BUDGET_S = 35.0  # overall scan budget before falling back to demo/error
 
 
 DEFAULT_SHARE_CODE = os.getenv("DEFAULT_SHARE_CODE", "DEMO01").strip().upper() or "DEMO01"
@@ -173,10 +175,13 @@ def _call_gemini_vision(
     from google import genai
     from google.genai import types
 
-    target_model = (model_name or GEMINI_MODEL).strip() or "gemini-3.5-flash"
+    target_model = (model_name or GEMINI_MODEL).strip() or "gemini-2.5-flash"
     client = genai.Client(
         api_key=api_key,
-        http_options=types.HttpOptions(timeout=GEMINI_CALL_TIMEOUT_MS),
+        http_options=types.HttpOptions(
+            timeout=GEMINI_CALL_TIMEOUT_MS,
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ),
     )
     response = client.models.generate_content(
         model=target_model,
@@ -451,13 +456,22 @@ def _call_gemini_catalog_lookup(
         therapeutic_class: str | None = None
         visual_spec: VisualSpec
 
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(
+            timeout=GEMINI_CATALOG_TIMEOUT_MS,
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ),
+    )
     prompt = (
         f"Indian medicine lookup for '{query}' (form: {dosage_form}). "
         "Return generic_name, therapeutic_class, and a compact visual_spec "
         "(shape, primary_color hex, optional secondary_color hex, strip_accent hex, short imprint <=5 chars)."
     )
+    started = time.monotonic()
     for model_name in _gemini_model_candidates():
+        if time.monotonic() - started > 16.0:
+            break
         try:
             resp = client.models.generate_content(
                 model=model_name,
@@ -1002,7 +1016,10 @@ async def lifespan(_app: FastAPI):
     with SessionLocal() as db:
         _seed_medicine_catalog(db)
         _seed_demo_profile(db, reset=False)
-    yield
+    try:
+        yield
+    finally:
+        db_engine.dispose()
 
 
 app = FastAPI(
@@ -1212,7 +1229,8 @@ async def scan_prescription(
         )
 
     try:
-        extraction, model_used, fallback_warnings = _call_gemini_vision_with_fallback(
+        extraction, model_used, fallback_warnings = await asyncio.to_thread(
+            _call_gemini_vision_with_fallback,
             image_bytes=image_bytes,
             mime_type=mime_type,
             api_key=api_key,
@@ -1263,11 +1281,13 @@ def create_or_update_profile(
         profile = db.scalar(select(Profile).where(Profile.share_code == share_code))
         if profile:
             profile.elder_name = payload.elder_name
-            profile.age = payload.age
+            if "age" in payload.model_fields_set:
+                profile.age = payload.age
             profile.preferred_language = payload.preferred_language
             profile.caregiver_name = payload.caregiver_name
             profile.caregiver_phone = payload.caregiver_phone
-            profile.known_allergies = list(payload.known_allergies)
+            if "known_allergies" in payload.model_fields_set:
+                profile.known_allergies = list(payload.known_allergies)
             db.commit()
             db.refresh(profile)
             active_count = len([m for m in profile.medicines if m.is_active])
@@ -2275,6 +2295,36 @@ def get_profile_refills(
     )
 
 
+def _extract_strength_tokens(strength: str | None, brand_name: str = "") -> list[tuple[float, str]]:
+    """Extract positive numeric dose values and optional units (e.g. [(50.0, 'mcg')]) for strip strength checks."""
+    raw = (strength or "").strip() or brand_name
+    tokens: list[tuple[float, str]] = []
+    for num_str, unit in re.findall(r"(\d+(?:\.\d+)?)\s*(mcg|mg|g|ml|iu|%)?", raw.lower()):
+        try:
+            val = float(num_str)
+        except ValueError:
+            continue
+        if val > 0:
+            tokens.append((val, unit))
+    return tokens
+
+
+def _strengths_conflict(
+    det_strength: str | None,
+    det_brand: str,
+    med_strength: str | None,
+    med_brand: str,
+) -> bool:
+    """Return True only when both strip and prescribed medicine specify strengths that disagree."""
+    det_tokens = _extract_strength_tokens(det_strength, det_brand)
+    med_tokens = _extract_strength_tokens(med_strength, med_brand)
+    if not det_tokens or not med_tokens:
+        return False
+    if [v for v, _ in det_tokens] != [v for v, _ in med_tokens]:
+        return True
+    return any(u1 and u2 and u1 != u2 for (_, u1), (_, u2) in zip(det_tokens, med_tokens))
+
+
 @app.post(
     "/scan/verify-strip",
     response_model=StripVerifyResponse,
@@ -2317,14 +2367,32 @@ async def verify_medicine_strip(
         extraction = PrescriptionExtractionOutput.model_validate(DEMO_PRESCRIPTION_PAYLOAD)
     else:
         try:
-            extraction, _, _ = _call_gemini_vision_with_fallback(
+            extraction, _, _ = await asyncio.to_thread(
+                _call_gemini_vision_with_fallback,
                 image_bytes=image_bytes,
                 mime_type=mime_type,
                 api_key=api_key,
             )
         except Exception:
-            logger.exception("Strip verification Gemini call failed; falling back to demo payload")
-            extraction = PrescriptionExtractionOutput.model_validate(DEMO_PRESCRIPTION_PAYLOAD)
+            logger.exception("Strip verification Gemini call failed on uploaded photo")
+            return StripVerifyResponse(
+                share_code=profile.share_code,
+                matched=False,
+                confidence=0.0,
+                spoken_en=(
+                    "Sorry, I could not verify this pill strip right now. "
+                    "Please do not take it yet — check with your caregiver."
+                ),
+                spoken_hi=(
+                    "माफ़ कीजिए, अभी इस दवाई के पत्ते की पुष्टि नहीं हो सकी। "
+                    "कृपया अभी यह दवा न लें और अपने देखभालकर्ता से पूछें।"
+                ),
+                spoken_mr=(
+                    "माफ करा, आत्ता या औषधाच्या पाकिटाची खात्री करता आली नाही. "
+                    "कृपया आत्ता घेऊ नका आणि तुमच्या काळजीवाहकाला विचारा."
+                ),
+                warning="Live AI pill verification unavailable; manual caregiver check required.",
+            )
 
     if not extraction.medicines:
         return StripVerifyResponse(
@@ -2337,25 +2405,43 @@ async def verify_medicine_strip(
             warning="No readable medicine detected in the uploaded image.",
         )
 
-    detected = extraction.medicines[0]
-    det_key = normalize_medicine_key(detected.brand_name)
-    det_root = base_brand_root(detected.brand_name)
-    det_gen = normalize_medicine_key(detected.generic_name or "")
-
     best_match: Medicine | None = None
-    for med in active_meds:
-        m_key = normalize_medicine_key(med.brand_name)
-        m_root = base_brand_root(med.brand_name)
-        m_gen = normalize_medicine_key(med.generic_name or "")
-        if (
-            (det_key and det_key == m_key)
-            or (det_root and m_root and det_root == m_root)
-            or (det_gen and m_gen and det_gen == m_gen)
-        ):
+    matched_detected = extraction.medicines[0]
+    strength_mismatch_pair: tuple[Any, Medicine] | None = None
+
+    for candidate in extraction.medicines:
+        det_key = normalize_medicine_key(candidate.brand_name)
+        det_root = base_brand_root(candidate.brand_name)
+        det_gen = normalize_medicine_key(candidate.generic_name or "")
+
+        for med in active_meds:
+            m_key = normalize_medicine_key(med.brand_name)
+            m_root = base_brand_root(med.brand_name)
+            m_gen = normalize_medicine_key(med.generic_name or "")
+            same_drug = (
+                (det_key and det_key == m_key)
+                or (det_root and m_root and det_root == m_root)
+                or (det_gen and m_gen and det_gen == m_gen)
+            )
+            if not same_drug:
+                continue
+            if _strengths_conflict(
+                candidate.strength,
+                candidate.brand_name,
+                med.strength,
+                med.brand_name,
+            ):
+                if strength_mismatch_pair is None:
+                    strength_mismatch_pair = (candidate, med)
+                continue
             best_match = med
+            matched_detected = candidate
+            break
+        if best_match is not None:
             break
 
     if best_match is not None:
+        detected = matched_detected
         slots = [ScheduleSlot.model_validate(s) for s in (best_match.schedule_slots or [])]
         slot_en = ", ".join(f"{s.label_en} ({s.time})" for s in slots) or "as advised"
         slot_hi = ", ".join(s.label_hi for s in slots) or "डॉक्टर की सलाह अनुसार"
@@ -2393,6 +2479,38 @@ async def verify_medicine_strip(
                 f"हे {slot_mr} घ्यायचे आहे."
             ),
         )
+
+    if strength_mismatch_pair is not None:
+        wrong_det, expected_med = strength_mismatch_pair
+        found_str = wrong_det.strength or wrong_det.brand_name
+        expected_str = expected_med.strength or expected_med.brand_name
+        return StripVerifyResponse(
+            share_code=profile.share_code,
+            matched=False,
+            confidence=round(float(wrong_det.confidence), 3),
+            detected_brand=wrong_det.brand_name,
+            detected_strength=wrong_det.strength,
+            matched_medicine=_serialize_medicine(expected_med),
+            spoken_en=(
+                f"Careful! This strip is {wrong_det.brand_name} {wrong_det.strength or ''}, "
+                f"which is a different strength from your prescribed {expected_med.brand_name} {expected_str}. "
+                "Please check with your caregiver before taking it."
+            ).replace("  ", " "),
+            spoken_hi=(
+                f"सावधान! यह पत्ता {wrong_det.brand_name} {wrong_det.strength or ''} का है, "
+                f"जबकि आपकी निर्धारित खुराक {expected_str} है। कृपया लेने से पहले अपने देखभालकर्ता से पूछें।"
+            ).replace("  ", " "),
+            spoken_mr=(
+                f"काळजी घ्या! हे पाकीट {wrong_det.brand_name} {wrong_det.strength or ''} चे आहे, "
+                f"पण तुमचा ठरलेला डोस {expected_str} आहे. कृपया घेण्यापूर्वी तुमच्या काळजीवाहकाला विचारा."
+            ).replace("  ", " "),
+            warning=(
+                f"Strength mismatch: strip shows '{found_str}', "
+                f"but active schedule specifies '{expected_med.brand_name} {expected_str}'."
+            ),
+        )
+
+    detected = extraction.medicines[0]
 
     return StripVerifyResponse(
         share_code=profile.share_code,

@@ -308,22 +308,23 @@ export async function scanPrescription(params: {
   file?: File;
   imageBase64: string;
   mimeType: string;
+  shareCode?: string;
   scanHint?: string;
   overrideStripPhoto?: string;
 }): Promise<ScanPrescriptionResponse> {
   if (FASTAPI_BASE_URL) {
-    let response: Response;
+    const formData = new FormData();
+    if (params.shareCode?.trim()) {
+      formData.append("share_code", params.shareCode.trim().toUpperCase());
+    }
     if (params.file) {
-      const formData = new FormData();
       formData.append("file", params.file);
-      response = await fetchScan(formData);
     } else {
       const blobRes = await fetch(params.imageBase64);
       const blob = await blobRes.blob();
-      const formData = new FormData();
       formData.append("file", blob, "prescription.jpg");
-      response = await fetchScan(formData);
     }
+    const response = await fetchScan(formData);
 
     const payload = (await response.json()) as Record<string, unknown>;
     if (!response.ok) {
@@ -1014,6 +1015,8 @@ export async function saveProfileContact(
   const normalizedCode = shareCode.trim().toUpperCase();
   let elderName = "Family Member";
   let preferredLang: LanguageCode = "hi";
+  let age: number | undefined;
+  let knownAllergies: string[] | undefined;
   try {
     const existingRes = await fetch(
       `${FASTAPI_BASE_URL}/profile/${encodeURIComponent(normalizedCode)}`
@@ -1021,6 +1024,10 @@ export async function saveProfileContact(
     if (existingRes.ok) {
       const existing = (await existingRes.json()) as Record<string, unknown>;
       if (existing.elder_name) elderName = String(existing.elder_name);
+      if (typeof existing.age === "number") age = existing.age;
+      if (Array.isArray(existing.known_allergies)) {
+        knownAllergies = existing.known_allergies.map((a) => String(a));
+      }
       if (
         existing.preferred_language === "en" ||
         existing.preferred_language === "hi" ||
@@ -1039,9 +1046,11 @@ export async function saveProfileContact(
     body: JSON.stringify({
       share_code: normalizedCode,
       elder_name: elderName,
+      ...(age !== undefined ? { age } : {}),
       preferred_language: preferredLang,
       caregiver_name: contact.name,
       caregiver_phone: contact.phone,
+      ...(knownAllergies !== undefined ? { known_allergies: knownAllergies } : {}),
     }),
   }).catch(() => undefined);
 }
@@ -1142,10 +1151,23 @@ export async function verifyMedicineStrip(params: {
     const formData = new FormData();
     formData.append("share_code", normalizedCode);
     formData.append("file", params.file);
-    const response = await fetch(`${FASTAPI_BASE_URL}/scan/verify-strip`, {
-      method: "POST",
-      body: formData,
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 45_000);
+    let response: Response;
+    try {
+      response = await fetch(`${FASTAPI_BASE_URL}/scan/verify-strip`, {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new Error("Pill verification timed out. Please check your connection and try again.");
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!response.ok) {
       throw new Error("Could not verify medicine strip. Please try again.");
     }

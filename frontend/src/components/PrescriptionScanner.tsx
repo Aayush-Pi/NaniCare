@@ -35,17 +35,22 @@ export function PrescriptionScanner({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const [showSourceMenu, setShowSourceMenu] = useState(false);
+  const [localFileError, setLocalFileError] = useState("");
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const original = event.target.files?.[0];
     event.target.value = "";
     setShowSourceMenu(false);
+    setLocalFileError("");
     if (!original) return;
 
     let file: File;
     try {
       file = await prepareImageFile(original);
-    } catch {
+    } catch (err: unknown) {
+      setLocalFileError(
+        err instanceof Error ? err.message : "Please choose an image file.",
+      );
       return;
     }
     const reader = new FileReader();
@@ -182,13 +187,13 @@ export function PrescriptionScanner({
           </div>
         )}
 
-        {scanError && (
+        {(scanError || localFileError) && (
           <div
             role="alert"
             className="flex items-start gap-3 rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 p-4 text-sm text-red-900 dark:text-red-200"
           >
             <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
-            <span>{scanError}</span>
+            <span>{scanError || localFileError}</span>
           </div>
         )}
       </div>

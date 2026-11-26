@@ -167,7 +167,7 @@ CRITICAL SAFETY RULES:
 7. If the image is a standalone medicine strip without dosage schedule printed, extract the medicine name and strength accurately, set frequency_code to "1-0-0", set ai_accuracy to "Medium", and state in ai_accuracy_reason that schedule timing is not printed on the strip and must be verified by the caregiver.`;
 
       const response = await ai.models.generateContent({
-        model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
+        model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
         contents: {
           parts: [
             {

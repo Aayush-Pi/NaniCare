@@ -137,3 +137,16 @@ describe("isImageFile", () => {
     assert.equal(isImageFile({ type: "application/pdf", name: "a.pdf" }), false);
   });
 });
+
+import { prepareImageFile } from "../image.ts";
+
+describe("prepareImageFile", () => {
+  it("rejects non-image files and passes small images through unchanged", async () => {
+    const pdf = new File(["%PDF-1.4"], "report.pdf", { type: "application/pdf" });
+    await assert.rejects(() => prepareImageFile(pdf), /image/i);
+
+    const smallJpg = new File(["small-bytes"], "rx.jpg", { type: "image/jpeg" });
+    const prepared = await prepareImageFile(smallJpg);
+    assert.equal(prepared, smallJpg);
+  });
+});

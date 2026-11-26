@@ -28,12 +28,17 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     import models
     import engine as engine_module
 
+    database.engine.dispose()
     importlib.reload(database)
     importlib.reload(models)
     importlib.reload(engine_module)
 
-    with TestClient(engine_module.app) as test_client:
-        yield test_client
+    try:
+        with TestClient(engine_module.app) as test_client:
+            yield test_client
+    finally:
+        database.engine.dispose()
+        engine_module.db_engine.dispose()
 
 
 # =============================================================================
@@ -667,3 +672,177 @@ def test_gender_neutral_spoken_instructions_no_hardcoded_nani(client: TestClient
         assert len(sched["cards"]) >= 4
         for card in sched["cards"]:
             assert forbidden not in card["spoken_text"]
+
+
+
+def test_scan_with_share_code_flags_allergy_and_profile_update_preserves_allergies(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    import io
+    from PIL import Image
+    import engine as engine_module
+    from schemas import PrescriptionExtractionOutput
+
+    # DEMO01 starts with known_allergies=["Sulfa drugs"] and age=72.
+    # Updating emergency contact without sending age/known_allergies must preserve both.
+    upd = client.post(
+        "/profile",
+        json={
+            "share_code": "DEMO01",
+            "elder_name": "Kamla Sharma",
+            "preferred_language": "hi",
+            "caregiver_name": "Aarav Sharma",
+            "caregiver_phone": "+919876543210",
+        },
+    )
+    assert upd.status_code == 201
+    assert upd.json()["age"] == 72
+    assert "Sulfa drugs" in upd.json()["known_allergies"]
+
+    # Simulate scanning a prescription containing a Sulfa drug (Septran DS) for DEMO01
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), color=(255, 255, 255)).save(buf, format="JPEG")
+    img_bytes = buf.getvalue()
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-live-key")
+    monkeypatch.setattr(
+        engine_module,
+        "_call_gemini_vision_with_fallback",
+        lambda **_kw: (
+            PrescriptionExtractionOutput.model_validate(
+                {
+                    "source_type": "prescription",
+                    "overall_confidence": 0.93,
+                    "medicines": [
+                        {
+                            "brand_name": "Septran DS",
+                            "generic_name": "Sulfamethoxazole + Trimethoprim",
+                            "strength": "800 mg",
+                            "dosage_form": "tablet",
+                            "dosage_pattern": "1-0-1",
+                            "meal_relation": "after_food",
+                            "confidence": 0.93,
+                            "low_confidence_fields": [],
+                        }
+                    ],
+                }
+            ),
+            "gemini-2.5-flash",
+            [],
+        ),
+    )
+
+    scan_res = client.post(
+        "/scan",
+        data={"share_code": "DEMO01"},
+        files={"file": ("rx.jpg", img_bytes, "image/jpeg")},
+    )
+    assert scan_res.status_code == 200
+    body = scan_res.json()
+    assert body["medicines"][0]["highlight_color"] == "red"
+    assert any(f["code"] == "ALLERGY_CONFLICT" for f in body["regimen_safety_flags"])
+
+
+def test_strip_verifier_wrong_strength_and_live_failure_safety(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    import io
+    from PIL import Image
+    import engine as engine_module
+    from schemas import PrescriptionExtractionOutput
+
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), color=(240, 240, 240)).save(buf, format="JPEG")
+    img_bytes = buf.getvalue()
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-live-key")
+
+    # 1. Wrong strength strip (Thyronorm 100 mcg vs DEMO01's prescribed Thyronorm 50 mcg) -> matched=False!
+    monkeypatch.setattr(
+        engine_module,
+        "_call_gemini_vision_with_fallback",
+        lambda **_kw: (
+            PrescriptionExtractionOutput.model_validate(
+                {
+                    "source_type": "blister_strip",
+                    "overall_confidence": 0.95,
+                    "medicines": [
+                        {
+                            "brand_name": "Thyronorm",
+                            "generic_name": "Levothyroxine Sodium",
+                            "strength": "100 mcg",
+                            "dosage_form": "tablet",
+                            "dosage_pattern": "OD",
+                            "meal_relation": "empty_stomach",
+                            "confidence": 0.95,
+                            "low_confidence_fields": [],
+                        }
+                    ],
+                }
+            ),
+            "gemini-2.5-flash",
+            [],
+        ),
+    )
+    mismatch_res = client.post(
+        "/scan/verify-strip",
+        data={"share_code": "DEMO01"},
+        files={"file": ("strip_100.jpg", img_bytes, "image/jpeg")},
+    )
+    assert mismatch_res.status_code == 200
+    mm = mismatch_res.json()
+    assert mm["matched"] is False
+    assert "100 mcg" in mm["spoken_en"]
+    assert "50 mcg" in mm["spoken_en"]
+    assert "strength mismatch" in (mm["warning"] or "").lower()
+
+    # 2. Live Gemini failure on a real uploaded strip MUST NOT spoof matched=True via demo payload
+    def _fail_vision(**_kw):
+        raise RuntimeError("Upstream 503")
+
+    monkeypatch.setattr(engine_module, "_call_gemini_vision_with_fallback", _fail_vision)
+    err_res = client.post(
+        "/scan/verify-strip",
+        data={"share_code": "DEMO01"},
+        files={"file": ("strip_unknown.jpg", img_bytes, "image/jpeg")},
+    )
+    assert err_res.status_code == 200
+    assert err_res.json()["matched"] is False
+
+
+def test_indian_fdc_hidden_paracetamol_and_beers_fall_risk():
+    per_med, regimen = scheduler.evaluate_medicine_safety(
+        [
+            {
+                "brand_name": "Zerodol-P",
+                "generic_name": None,
+                "strength": "100/325 mg",
+                "dosage_pattern": "1-0-1",
+                "meal_relation": "after_food",
+                "confidence": 0.92,
+                "low_confidence_fields": [],
+            },
+            {
+                "brand_name": "Dolo 650",
+                "generic_name": "Paracetamol",
+                "strength": "650 mg",
+                "dosage_pattern": "SOS",
+                "meal_relation": "after_food",
+                "confidence": 0.96,
+                "low_confidence_fields": [],
+            },
+            {
+                "brand_name": "Alprax 0.25",
+                "generic_name": "Alprazolam",
+                "strength": "0.25 mg",
+                "dosage_pattern": "0-0-1",
+                "meal_relation": "after_food",
+                "confidence": 0.94,
+                "low_confidence_fields": [],
+            },
+        ]
+    )
+    regimen_codes = {f.code for f in regimen}
+    assert "DUPLICATE_PARACETAMOL" in regimen_codes
+    alprax_codes = {f.code for f in per_med[2]}
+    assert "HIGH_ALERT_FALL_RISK" in alprax_codes

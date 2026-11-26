@@ -145,6 +145,7 @@ export function CaregiverPage({
         file: params.file,
         imageBase64: params.imageBase64,
         mimeType: params.mimeType,
+        shareCode,
         scanHint: params.hint,
         overrideStripPhoto: params.overrideStripPhoto,
       });

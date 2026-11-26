@@ -228,3 +228,6 @@ node_modules/
 .env.*
 !.env.example
 .neon
+
+# Local stray screenshots
+screenshot*.png

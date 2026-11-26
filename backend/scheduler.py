@@ -122,7 +122,25 @@ _NIGHT_PREFERRED_DRUGS = (
 _MOLECULE_CLASS_MAP: dict[str, tuple[str, tuple[str, ...]]] = {
     "paracetamol": (
         "Paracetamol (Acetaminophen)",
-        ("paracetamol", "acetaminophen", "dolo", "crocin", "calpol", "pacimol", "p-650", "p650"),
+        (
+            "paracetamol",
+            "acetaminophen",
+            "dolo",
+            "crocin",
+            "calpol",
+            "pacimol",
+            "p-650",
+            "p650",
+            "combiflam",
+            "zerodol-p",
+            "zerodol p",
+            "hifenac-p",
+            "hifenac p",
+            "ultracet",
+            "sumo",
+            "sinarest",
+            "wikoryl",
+        ),
     ),
     "ppi": (
         "Acid-Suppressing PPI",
@@ -130,7 +148,7 @@ _MOLECULE_CLASS_MAP: dict[str, tuple[str, tuple[str, ...]]] = {
     ),
     "nsaid": (
         "NSAID Painkiller",
-        ("ibuprofen", "brufen", "combiflam", "diclofenac", "voveran", "aceclofenac", "zerodol", "naproxen", "piroxicam", "etoricoxib", "nucoxia"),
+        ("ibuprofen", "brufen", "combiflam", "diclofenac", "voveran", "aceclofenac", "zerodol", "hifenac", "naproxen", "piroxicam", "etoricoxib", "nucoxia", "nimesulide", "sumo"),
     ),
     "antiplatelet": (
         "Blood Thinner / Antiplatelet",
@@ -142,7 +160,7 @@ _MOLECULE_CLASS_MAP: dict[str, tuple[str, tuple[str, ...]]] = {
     ),
     "sulfonylurea": (
         "Sulfonylurea Diabetes Medicine",
-        ("glimepiride", "amaryl", "glimy", "glipizide", "gliclazide", "glizid", "diamicron", "glibenclamide"),
+        ("glimepiride", "amaryl", "glimy", "glimestar", "glycomet-gp", "glycomet gp", "glipizide", "gliclazide", "glizid", "diamicron", "glibenclamide"),
     ),
     "insulin": (
         "Insulin",
@@ -167,6 +185,10 @@ _MOLECULE_CLASS_MAP: dict[str, tuple[str, tuple[str, ...]]] = {
     "digoxin": (
         "Digoxin (Cardiac Glycoside)",
         ("digoxin", "lanoxin"),
+    ),
+    "geriatric_sedative": (
+        "Sedative / Fall-Risk Medicine (Beers Criteria)",
+        ("alprazolam", "alprax", "restyl", "lorazepam", "ativan", "clonazepam", "zapiz", "rivotril", "diazepam", "valium", "zolpidem", "zolfresh", "stilnoct", "pheniramine", "avil", "hydroxyzine", "atarax", "chlorpheniramine"),
     ),
 }
 
@@ -210,6 +232,14 @@ _HIGH_ALERT_RULES: dict[str, dict[str, str]] = {
         "en": "Take first thing in the morning on an empty stomach with plain water; wait 30–45 minutes before tea, coffee, or breakfast.",
         "hi": "सुबह खाली पेट सादे पानी के साथ लें; चाय, कॉफी या नाश्ते से 30–45 मिनट पहले लें।",
         "mr": "सकाळी उपाशीपोटी साध्या पाण्यासोबत घ्या; चहा, कॉफी किंवा नाश्त्याआधी 30–45 मिनिटे थांबा.",
+    },
+    "geriatric_sedative": {
+        "code": "HIGH_ALERT_FALL_RISK",
+        "severity": "warning",
+        "title": "Geriatric Fall & Drowsiness Risk (Beers Criteria)",
+        "en": "Can cause drowsiness, dizziness, or night-time imbalance in older adults; assist when standing up from bed to prevent falls.",
+        "hi": "बुजुर्गों में नींद, चक्कर या रात में गिरने का खतरा बढ़ा सकती है; बिस्तर से उठते समय सहारा दें।",
+        "mr": "ज्येष्ठांमध्ये गुंगी, चक्कर किंवा रात्री पडण्याचा धोका वाढवू शकते; उठताना आधार द्या.",
     },
 }
 
@@ -639,7 +669,7 @@ _ALLERGY_TRIGGERS: list[tuple[tuple[str, ...], str, tuple[str, ...]]] = [
     (
         ("paracetamol", "acetaminophen"),
         "Paracetamol",
-        ("paracetamol", "acetaminophen", "dolo", "crocin", "calpol", "pacimol"),
+        ("paracetamol", "acetaminophen", "dolo", "crocin", "calpol", "pacimol", "combiflam", "zerodol-p", "zerodol p", "hifenac-p", "ultracet", "sumo", "sinarest", "wikoryl"),
     ),
     (
         ("statin", "atorvastatin", "rosuvastatin"),
